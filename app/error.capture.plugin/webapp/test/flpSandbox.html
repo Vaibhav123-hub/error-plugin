@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Error Capture Plugin - Local FLP Sandbox</title>
+
+	<script>
+		// Local Fiori Launchpad sandbox: one custom tile ("Demo Custom Tile") and our
+		// plugin registered exactly the way a real FLP plugin catalog entry would be.
+		// See ../../../../readme.md for how to register the plugin on a real system instead.
+		window["sap-ushell-config"] = {
+			defaultRenderer: "fiori2",
+			bootstrapPlugins: {
+				ErrorCapturePlugin: {
+					component: "error.capture.plugin",
+					config: {}
+				}
+			},
+			services: {
+				LaunchPage: {
+					adapter: {
+						config: {
+							groups: [
+								{
+									id: "demo_group",
+									title: "Demo",
+									tiles: [
+										{
+											id: "demoapp_tile",
+											title: "Demo Custom Tile",
+											size: "1x1",
+											tileType: "sap.ushell.ui.tile.StaticTile",
+											properties: {
+												title: "Demo Custom Tile",
+												info: "Triggers sample popups/messages",
+												targetURL: "#demoapp-display"
+											}
+										}
+									]
+								}
+							]
+						}
+					}
+				},
+				NavTargetResolution: {
+					adapter: {
+						config: {
+							applications: {
+								"demoapp-display": {
+									additionalInformation: "SAPUI5.Component=error.capture.plugin.test.demoapp",
+									applicationType: "SAPUI5",
+									url: "./demoapp",
+									navigationMode: "embedded"
+								}
+							}
+						}
+					}
+				},
+				ClientSideTargetResolution: {
+					adapter: {
+						config: {
+							inbounds: {
+								"demoapp-display": {
+									semanticObject: "demoapp",
+									action: "display",
+									title: "Demo Custom Tile",
+									resolutionResult: {
+										applicationType: "SAPUI5",
+										additionalInformation: "SAPUI5.Component=error.capture.plugin.test.demoapp",
+										url: "./demoapp"
+									},
+									signature: { parameters: {}, additionalParameters: "allowed" }
+								}
+							}
+						}
+					}
+				}
+			}
+		};
+	</script>
+
+	<script src="https://sapui5.hana.ondemand.com/test-resources/sap/ushell/bootstrap/sandbox.js" id="sap-ushell-bootstrap"></script>
+	<script
+		src="https://sapui5.hana.ondemand.com/resources/sap-ui-core.js"
+		id="sap-ui-bootstrap"
+		data-sap-ui-libs="sap.m, sap.ushell, sap.ui.layout"
+		data-sap-ui-theme="sap_horizon"
+		data-sap-ui-compatVersion="edge"
+		data-sap-ui-async="true"
+		data-sap-ui-frameOptions="allow"
+		data-sap-ui-resourceroots='{
+			"error.capture.plugin": "../",
+			"error.capture.plugin.test.demoapp": "./demoapp/"
+		}'>
+	</script>
+
+	<script>
+		sap.ui.getCore().attachInit(function () {
+			sap.ushell.Container.createRenderer().placeAt("content");
+		});
+	</script>
+</head>
+<body class="sapUiBody" id="content">
+</body>
+</html>

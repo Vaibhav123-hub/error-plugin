@@ -1,0 +1,13 @@
+specVersion: "3.0"
+metadata:
+  name: error.capture.plugin
+type: application
+# Requires access to the SAPUI5 npm registry (sap.ushell is SAPUI5-only, provided by the
+# Fiori Launchpad shell at runtime - it is declared, not bundled, see manifest.json).
+framework:
+  name: SAPUI5
+  version: "1.120.0"
+  libraries:
+    - name: sap.ui.core
+    - name: sap.m
+    - name: sap.ushell

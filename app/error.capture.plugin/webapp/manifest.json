@@ -1,0 +1,64 @@
+{
+  "_version": "1.58.0",
+  "sap.app": {
+    "id": "error.capture.plugin",
+    "type": "component",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": {
+      "version": "1.0.0"
+    },
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "ach": "CA-UI5-FE-SHL"
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "icons": {},
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "componentName": "error.capture.plugin",
+    "config": {
+      "fullWidth": true,
+      "errorCapture": {
+        "_comment": "Runtime config for util/MessageInterceptor.js - adjust per landscape without touching code.",
+        "backendBaseUrl": "/odata/v4/error-log",
+        "capturedSeverities": [ "Error", "Warning" ],
+        "captureMessageToast": true,
+        "captureUnhandledJsErrors": true,
+        "flushIntervalMs": 5000,
+        "maxQueueLength": 200,
+        "maxStoredOffline": 500,
+        "standardAppNamespacePrefixes": [ "sap.", "com.sap." ]
+      }
+    },
+    "dependencies": {
+      "minUI5Version": "1.120.0",
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {},
+        "sap.ushell": {}
+      }
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "error.capture.plugin.i18n.i18n"
+        }
+      }
+    }
+  },
+  "sap.flp": {
+    "type": "plugin"
+  },
+  "sap.platform.runtime": {
+    "componentProperties": {
+      "loadCoreExt": false
+    }
+  }
+}

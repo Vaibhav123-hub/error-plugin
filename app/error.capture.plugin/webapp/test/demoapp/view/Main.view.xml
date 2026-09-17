@@ -1,0 +1,17 @@
+<mvc:View
+	controllerName="error.capture.plugin.test.demoapp.controller.Main"
+	xmlns="sap.m"
+	xmlns:mvc="sap.ui.core.mvc">
+	<Page title="Demo Custom Tile">
+		<content>
+			<VBox class="sapUiMediumMargin">
+				<Text text="Use these buttons to simulate messages a custom-built Fiori tile might raise. Open the browser console / network tab to see them captured and posted to the Error Log service." class="sapUiSmallMarginBottom"/>
+				<Button text="Trigger MessageBox.error" type="Reject" press="onTriggerMessageBoxError" class="sapUiTinyMarginBottom"/>
+				<Button text="Trigger MessageBox.warning" press="onTriggerMessageBoxWarning" class="sapUiTinyMarginBottom"/>
+				<Button text="Trigger MessageToast" press="onTriggerMessageToast" class="sapUiTinyMarginBottom"/>
+				<Button text="Trigger validation message (MessageManager)" press="onTriggerMessageManager" class="sapUiTinyMarginBottom"/>
+				<Button text="Trigger uncaught JS error" press="onTriggerJsError" class="sapUiTinyMarginBottom"/>
+			</VBox>
+		</content>
+	</Page>
+</mvc:View>

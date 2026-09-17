@@ -1,0 +1,36 @@
+{
+  "_version": "1.58.0",
+  "sap.app": {
+    "id": "error.capture.plugin.test.demoapp",
+    "type": "application",
+    "applicationVersion": { "version": "1.0.0" },
+    "title": "Demo Custom Tile",
+    "description": "Sample custom-built app used to exercise the Error Capture plugin locally",
+    "crossNavigation": {
+      "inbounds": {
+        "demoapp-display": {
+          "semanticObject": "demoapp",
+          "action": "display",
+          "title": "Demo Custom Tile",
+          "signature": { "parameters": {}, "additionalParameters": "allowed" }
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "deviceTypes": { "desktop": true, "tablet": true, "phone": true }
+  },
+  "sap.ui5": {
+    "rootView": {
+      "viewName": "error.capture.plugin.test.demoapp.view.Main",
+      "type": "XML",
+      "id": "app"
+    },
+    "dependencies": {
+      "minUI5Version": "1.120.0",
+      "libs": { "sap.m": {}, "sap.ui.core": {} }
+    },
+    "models": {}
+  }
+}
