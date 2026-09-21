@@ -78,34 +78,53 @@ CDN) with the plugin registered as a `bootstrapPlugin` and one demo tile
 `MessageBox.warning`, `MessageToast`, a message-model validation message,
 and an uncaught JS error. Open the browser console / Network tab to see each
 one captured and POSTed to `ErrorLogService`. Point `backendBaseUrl` in the
-plugin's `manifest.json` at your running `cds watch` instance (e.g.
-`http://localhost:4004/odata/v4/error-log`) to see them land in `ErrorLogs`.
+plugin's `manifest.json` at your running `cds watch` instance using an
+**absolute** URL (e.g. `http://localhost:4004/odata/v4/error-log`; the
+default is relative and only makes sense behind an approuter) to see them land in `ErrorLogs`.
 
 ## Deploying
 
-- **Backend**: `mta.yaml` builds the CAP service + an HDI deployer for the
-  HANA schema (`db/schema.cds`) + an XSUAA instance with the `ErrorLogAdmin`
-  role. Deploy with the standard CAP/MTA flow:
-  ```sh
-  mbt build && cf deploy mta_archives/error-plugin_1.0.0.mtar
-  ```
-- **Plugin**: build it with `npm run build` inside
-  `app/error.capture.plugin` (requires SAPUI5 npm registry access, since
-  `sap.ushell` is SAPUI5-only) and register the resulting component as an
-  FLP plugin:
-  - **On-premise / ABAP Fiori Launchpad**: upload the built app to a BSP
-    application (e.g. via `@ui5/cli` + `ui5-task-nwabap-deployer` or Fiori
-    Tools "Deploy to ABAP"), create an `LPD_CUST` entry with plugin type
-    `AL` (UI5 plugin), and assign it to the relevant Launchpad role(s)/site.
-  - **SAP Build Work Zone / BTP Launchpad service**: deploy the built app to
-    the HTML5 Application Repository (add it as an `sap.app.embeds`/HTML5
-    module to `mta.yaml`), then register it as a **plugin** content resource
-    in the Launchpad site's Content Manager and assign it to the site.
-  - In both cases, point `sap.ui5/config/errorCapture/backendBaseUrl` in the
-    deployed plugin's `manifest.json` at the deployed CAP service URL (via a
-    destination, if the plugin and service aren't served from the same
-    origin — otherwise the browser CSRF/cookie flow used by
-    `MessageInterceptor.js` won't work cross-origin).
+### SAP BTP Cloud Foundry + SAP Build Work Zone (wired up in `mta.yaml`)
+
+```sh
+cf login -a <api-endpoint> --sso && cf target -o <org> -s <space>
+mbt build && cf deploy mta_archives/error-plugin_1.0.0.mtar
+```
+
+`mta.yaml` deploys, in one go:
+
+- the CAP service (`error-plugin-srv`) + an HDI deployer for the HANA schema
+  and an XSUAA instance with the `ErrorLogAdmin` role,
+- the plugin as an **HTML5 app** in the HTML5 Application Repository
+  (`error-plugin-ui`, built by `npm run build` in `app/error.capture.plugin`
+  from `ui5-deploy.yaml` - a plain zip, the UI5 runtime is *not* bundled),
+- the destination `srv-api` (with the user's token forwarded) that the
+  plugin's `xs-app.json` routes `/odata/*` to, i.e. to the CAP service.
+
+The plugin's `backendBaseUrl` (`odata/v4/error-log` in `manifest.json`) is
+deliberately **relative**: `MessageInterceptor.js` resolves it against the
+plugin's own resource path, so requests hit the plugin's approuter routes
+rather than the launchpad's origin. Only use an absolute URL for local
+development (see above).
+
+After the deploy:
+
+1. Assign the `ErrorLogAdmin (error-plugin <org>-<space>)` role collection to
+   whoever should read `ErrorLogs` (not needed to *report* messages).
+2. In Work Zone **Channel Manager**, refresh the HTML5 Apps content provider.
+3. In **Content Manager** add the plugin app (type *plugin*) to your content
+   and assign it to the site / a role of your users, then reload the site.
+
+### On-premise / ABAP Fiori Launchpad
+
+Upload the built app (`npm run build` in `app/error.capture.plugin`, unzip
+`dist/error.capture.plugin.zip`) to a BSP application (e.g. Fiori Tools
+"Deploy to ABAP"), create an `LPD_CUST` entry with plugin type `AL`
+(UI5 plugin), and assign it to the relevant Launchpad role(s). Set
+`backendBaseUrl` in the deployed `manifest.json` to a URL that reaches the CAP
+service same-origin (e.g. a reverse-proxy path/web dispatcher rule), because
+the browser cookie/CSRF flow in `MessageInterceptor.js` doesn't work
+cross-origin.
 
 ## Notes / known limitations
 
