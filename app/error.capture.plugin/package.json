@@ -5,9 +5,10 @@
   "description": "FLP plugin that captures message popups / screen messages from standard and custom Fiori tiles",
   "scripts": {
     "start": "ui5 serve --open test/flpSandbox.html",
-    "build": "ui5 build self-contained --clean-dest --dest dist"
+    "build": "ui5 build --config ui5-deploy.yaml --clean-dest --dest dist"
   },
   "devDependencies": {
-    "@ui5/cli": "^3"
+    "@ui5/cli": "^3",
+    "ui5-task-zipper": "^3"
   }
 }

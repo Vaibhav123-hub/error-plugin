@@ -1,0 +1,23 @@
+# Build config for the HTML5 Application Repository (used by `npm run build`, i.e. by mta.yaml).
+# Unlike ui5.yaml (local sandbox) it declares no SAPUI5 framework: the plugin is only zipped -
+# the UI5 runtime and sap.ushell come from the launchpad at runtime, nothing is bundled.
+specVersion: "3.0"
+metadata:
+  name: error.capture.plugin
+type: application
+resources:
+  configuration:
+    propertiesFileSourceEncoding: UTF-8
+builder:
+  resources:
+    excludes:
+      - "/test/**"
+      - "/localService/**"
+  customTasks:
+    - name: ui5-task-zipper
+      afterTask: generateVersionInfo
+      configuration:
+        archiveName: error.capture.plugin
+        relativePaths: true
+        additionalFiles:
+          - xs-app.json
