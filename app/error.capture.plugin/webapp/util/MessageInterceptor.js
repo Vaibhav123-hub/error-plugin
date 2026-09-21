@@ -21,6 +21,17 @@ sap.ui.define([
 		return _oConfig.capturedSeverities.indexOf(sSeverity) !== -1;
 	}
 
+	// A relative backendBaseUrl (the default) is resolved against the plugin's own resource root, so the
+	// request goes through the plugin's approuter routes (xs-app.json) - the plugin runs inside the FLP page,
+	// whose own origin/path has no such routes. Absolute ("/..." or "http(s)://...") URLs are used as given.
+	function _resolveBackendBaseUrl(sUrl) {
+		var sTrimmed = String(sUrl).replace(/\/+$/, "");
+		if (sTrimmed.charAt(0) === "/" || /^[a-z][a-z0-9+.-]*:/i.test(sTrimmed)) {
+			return sTrimmed;
+		}
+		return sap.ui.require.toUrl("error/capture/plugin").replace(/\/+$/, "") + "/" + sTrimmed;
+	}
+
 	function _stringifyDetails(vDetails) {
 		try {
 			return typeof vDetails === "string" ? vDetails : JSON.stringify(vDetails);
@@ -134,7 +145,7 @@ sap.ui.define([
 		});
 	}
 
-	function _postBatch(aBatch) {
+	function _sendBatch(aBatch) {
 		return _ensureCsrfToken().then(function (sToken) {
 			var mHeaders = { "Content-Type": "application/json" };
 			if (sToken) { mHeaders["X-CSRF-Token"] = sToken; }
@@ -145,6 +156,17 @@ sap.ui.define([
 				headers: mHeaders,
 				body: JSON.stringify({ entries: aBatch })
 			});
+		});
+	}
+
+	function _postBatch(aBatch) {
+		return _sendBatch(aBatch).then(function (oResponse) {
+			// the approuter rejects a stale CSRF token with 403 (e.g. after its session was renewed) - fetch a fresh one and retry once
+			if (oResponse.status === 403 && _sCsrfToken) {
+				_sCsrfToken = null;
+				return _sendBatch(aBatch);
+			}
+			return oResponse;
 		}).then(function (oResponse) {
 			if (!oResponse.ok) {
 				throw new Error("Error Log service responded with status " + oResponse.status);
@@ -322,7 +344,7 @@ sap.ui.define([
 			if (_bInitialized) { return; }
 
 			_oConfig = Object.assign({
-				backendBaseUrl: "/odata/v4/error-log",
+				backendBaseUrl: "odata/v4/error-log",
 				capturedSeverities: ["Error", "Warning"],
 				captureMessageToast: true,
 				captureUnhandledJsErrors: true,
@@ -331,6 +353,7 @@ sap.ui.define([
 				maxStoredOffline: 500,
 				standardAppNamespacePrefixes: ["sap.", "com.sap."]
 			}, mConfig || {});
+			_oConfig.backendBaseUrl = _resolveBackendBaseUrl(_oConfig.backendBaseUrl);
 
 			_restoreQueue();
 			_refreshAppContext();

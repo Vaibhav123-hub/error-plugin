@@ -26,7 +26,7 @@
       "fullWidth": true,
       "errorCapture": {
         "_comment": "Runtime config for util/MessageInterceptor.js - adjust per landscape without touching code.",
-        "backendBaseUrl": "/odata/v4/error-log",
+        "backendBaseUrl": "odata/v4/error-log",
         "capturedSeverities": [ "Error", "Warning" ],
         "captureMessageToast": true,
         "captureUnhandledJsErrors": true,
@@ -60,5 +60,9 @@
     "componentProperties": {
       "loadCoreExt": false
     }
+  },
+  "sap.cloud": {
+    "public": true,
+    "service": "errorplugin.service"
   }
 }
