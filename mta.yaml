@@ -4,6 +4,7 @@ version: 1.0.0
 description: "A simple CAP project."
 parameters:
   enable-parallel-deployments: true
+  deploy_mode: html5-repo
 build-parameters:
   before-all:
     - builder: custom
@@ -26,6 +27,7 @@ modules:
     requires:
       - name: error-plugin-auth
       - name: error-plugin-db
+      - name: error-plugin-destination
 
   - name: error-plugin-db-deployer
     type: hdb
@@ -34,6 +36,79 @@ modules:
       buildpack: nodejs_buildpack
     requires:
       - name: error-plugin-db
+
+  - name: error-plugin-destinations
+    type: com.sap.application.content
+    requires:
+      - name: error-plugin-auth
+        parameters:
+          service-key:
+            name: error-plugin-auth-key
+      - name: error-plugin-html5-repo-host
+        parameters:
+          service-key:
+            name: error-plugin-html5-repo-host-key
+      - name: srv-api
+      - name: error-plugin-destination
+        parameters:
+          content-target: true
+    build-parameters:
+      no-source: true
+    parameters:
+      content:
+        instance:
+          existing_destinations_policy: update
+          destinations:
+            - Name: error-plugin-html5-repository
+              ServiceInstanceName: error-plugin-html5-repo-host
+              ServiceKeyName: error-plugin-html5-repo-host-key
+              sap.cloud.service: errorplugin.service
+            - Name: error-plugin-auth
+              Authentication: OAuth2UserTokenExchange
+              ServiceInstanceName: error-plugin-auth
+              ServiceKeyName: error-plugin-auth-key
+              sap.cloud.service: errorplugin.service
+
+  - name: error-plugin-app-deployer
+    type: com.sap.application.content
+    path: gen
+    build-parameters:
+      build-result: app/
+      requires:
+        - name: error-plugin-ui
+          artifacts:
+            - error.capture.plugin.zip
+          target-path: app/
+    requires:
+      - name: error-plugin-auth
+      - name: srv-api
+      - name: error-plugin-html5-repo-host
+        parameters:
+          content-target: true
+          config:
+            HTML5Runtime_enabled: true
+    parameters:
+      config:
+        destinations:
+          - Name: srv-api
+            URL: ~{srv-api/srv-url}
+            Authentication: NoAuthentication
+            Type: HTTP
+            ProxyType: Internet
+            ForwardAuthToken: true
+            DynamicDestination: true
+
+  - name: error-plugin-ui
+    type: html5
+    path: app/error.capture.plugin
+    build-parameters:
+      build-result: dist
+      builder: custom
+      commands:
+        - npm ci
+        - npm run build
+      supported-platforms:
+        []
 
 resources:
   - name: error-plugin-auth
@@ -59,3 +134,16 @@ resources:
     parameters:
       service: hana
       service-plan: hdi-shared
+  - name: error-plugin-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+    requires:
+      - name: srv-api
+
+  - name: error-plugin-html5-repo-host
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: html5-apps-repo
+      service-plan: app-host
