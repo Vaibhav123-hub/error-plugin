@@ -1,7 +1,10 @@
 import cds from '@sap/cds';
 
 const VALID_SEVERITIES = ['Error', 'Warning', 'Success', 'Information'];
-const VALID_SOURCES = ['MessageBox', 'MessageToast', 'MessagePopover', 'MessageManager', 'JSError', 'UnhandledRejection'];
+const VALID_SOURCES = [
+  'MessageBox', 'MessageToast', 'MessagePopover', 'MessageManager', 'JSError', 'UnhandledRejection',
+  'ABAPMessage', 'WebDynproABAP'
+];
 
 function normalize(entry, req) {
   return {
@@ -20,7 +23,9 @@ function normalize(entry, req) {
     client: entry.client,
     userAgent: entry.userAgent,
     stack: entry.stack,
-    additionalInfo: entry.additionalInfo
+    additionalInfo: entry.additionalInfo,
+    tcode: entry.tcode,
+    program: entry.program
   };
 }
 

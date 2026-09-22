@@ -12,7 +12,9 @@ service ErrorLogService {
   ]
   entity ErrorLogs as projection on db.ErrorLogs;
 
-  // Single call used by the FLP plugin to report one captured message.
+  // Single call used to report one captured message - by the FLP plugin (MessageBox/MessageToast/
+  // MessageManager/JS errors, all UI5-based) and directly by ABAP for WebGUI/Web Dynpro transaction
+  // tiles, which the browser-side plugin can't see into (see abap/README.md).
   // Kept as an action (rather than exposing ErrorLogs for direct CREATE) so the
   // server can stamp timestamp/userId and reject fields the client shouldn't set.
   action logError (
@@ -30,10 +32,12 @@ service ErrorLogService {
     client         : String(10),
     userAgent      : String(400),
     stack          : LargeString,
-    additionalInfo : LargeString
+    additionalInfo : LargeString,
+    tcode          : String(20),
+    program        : String(40)
   ) returns ErrorLogs;
 
-  // Batch variant so the plugin can flush a queue of messages (e.g. after being offline) in one round trip.
+  // Batch variant so a caller can flush several messages (e.g. after being offline) in one round trip.
   action logErrors ( entries : many {
     timestamp      : Timestamp;
     severity       : String(20);
@@ -50,5 +54,7 @@ service ErrorLogService {
     userAgent      : String(400);
     stack          : LargeString;
     additionalInfo : LargeString;
+    tcode          : String(20);
+    program        : String(40);
   }) returns Integer;
 }
