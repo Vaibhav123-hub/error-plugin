@@ -2,9 +2,13 @@
 
 An SAP Fiori Launchpad (FLP) plugin that captures message popups and screen
 messages (`sap.m.MessageBox`, `sap.m.MessageToast`, the UI5 message
-model/popover, and uncaught JS errors) raised by **any** app running on the
-launchpad — standard SAP Fiori apps and custom-built apps alike — and
-persists them through a CAP service backed by SAP HANA.
+model/popover, and uncaught JS errors) raised by **any UI5 app** running on
+the launchpad — standard SAP Fiori apps and custom-built UI5 apps alike —
+and persists them through a CAP service backed by SAP HANA. Transaction
+tiles that launch SAP GUI for HTML (WebGUI) or Web Dynpro ABAP aren't UI5
+apps, so the plugin can't see into them; those are covered separately by
+ABAP calling the same CAP service directly — see
+[`abap/README.md`](abap/README.md).
 
 ## Project layout
 
@@ -12,9 +16,11 @@ File or Folder | Purpose
 ---------|----------
 `app/error.capture.plugin/` | the FLP plugin (UI5 component) and its message interceptor
 `app/error.capture.plugin/webapp/test/` | local FLP sandbox + a demo custom tile to exercise the plugin without a real system
+`app/error.capture.plugin/xs-app.json`, `ui5-deploy.yaml` | approuter routes (`/odata/*` → CAP service) and HTML5-repo build config for the plugin
 `db/schema.cds` | `ErrorLogs` entity that stores captured messages (HANA in production, SQLite for local dev)
-`srv/error-service.cds` / `srv/error-service.js` | `ErrorLogService`, the CAP service the plugin reports messages to
-`xs-security.json`, `mta.yaml` | XSUAA role (`ErrorLogAdmin`) and Cloud Foundry deployment descriptor (CAP srv + HDI/HANA container)
+`srv/error-service.cds` / `srv/error-service.js` | `ErrorLogService`, the CAP service the plugin (and ABAP) report messages to
+`xs-security.json`, `mta.yaml` | XSUAA role (`ErrorLogAdmin`) and Cloud Foundry deployment descriptor (CAP srv + HDI/HANA container + HTML5 plugin + destinations)
+`abap/` | ABAP-side reporting for WebGUI/Web Dynpro transaction tiles the plugin can't reach — see [`abap/README.md`](abap/README.md)
 
 ## How it works
 
@@ -125,6 +131,25 @@ Upload the built app (`npm run build` in `app/error.capture.plugin`, unzip
 service same-origin (e.g. a reverse-proxy path/web dispatcher rule), because
 the browser cookie/CSRF flow in `MessageInterceptor.js` doesn't work
 cross-origin.
+
+## Transaction tiles (SAP GUI / Web Dynpro ABAP, launched by t-code)
+
+Tiles that launch a t-code run SAP GUI for HTML (WebGUI) or Web Dynpro ABAP
+in an iframe — server-rendered technology with no `sap.m.MessageBox`, no UI5
+message model, nothing the plugin's JS can hook into. Even genuine JS errors
+inside that iframe aren't reachable from the shell's `window.onerror` across
+the iframe boundary in general (browsers don't propagate iframe errors to
+the parent window).
+
+So this is handled the other way round: ABAP calls `ErrorLogService`
+directly, the same actions the plugin uses (`logError`/`logErrors`), via a
+reference class and setup guide in [`abap/README.md`](abap/README.md). Rows
+from this path use `source: ABAPMessage` / `WebDynproABAP`, and carry `tcode`
+and `program` instead of a UI5 `appId`. **It's opt-in per transaction** —
+your ABAP team wires the call into custom transactions directly, and into
+standard ones via whatever enhancement/BAdI your release provides (there
+isn't a single hook that's guaranteed to exist everywhere); see that guide
+for the trade-offs.
 
 ## Notes / known limitations
 
