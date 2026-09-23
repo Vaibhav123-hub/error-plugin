@@ -163,16 +163,17 @@ for the trade-offs.
 
 ## Notes / known limitations
 
-- **One row per distinct error.** An error is identified by severity,
-  message, message code, app and (for ABAP) t-code/program — not by source,
-  user or URL. The same error reported again within `duplicateWindowMs`
-  (default 2s) is treated as the same trigger surfacing through another
-  channel (e.g. a failed call recorded as `HttpError` *and* the `MessageBox`
-  showing it) and recorded once, under whichever channel saw it first.
-  A later repeat increments `occurrences` and updates `lastOccurredAt` /
-  `lastUserId`; `timestamp` / `userId` stay those of the first occurrence.
+- **One row per interaction.** Every time a user runs into an error it's
+  stored as its own row, but one interaction is never stored twice: the same
+  error (same severity, message, message code, app and, for ABAP,
+  t-code/program — not source, user or URL) reported again within
+  `duplicateWindowMs` (default 2s) is the same trigger surfacing through
+  another channel (e.g. a failed call recorded as `HttpError` *and* the
+  `MessageBox` showing it) and is recorded once, under whichever channel saw
+  it first. Every occurrence of the same error carries the same
+  `fingerprint`, so group or count by it to see how often an error repeats.
   Errors whose texts differ (e.g. an app shows its own wording for a failed
-  call) are still separate rows.
+  call) are separate rows.
 - `standardApp` is a heuristic based on the component id prefix
   (`sap.ui5/config/errorCapture/standardAppNamespacePrefixes` in
   `manifest.json`, default `sap.`/`com.sap.`) — adjust it to match your

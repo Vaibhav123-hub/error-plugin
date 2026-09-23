@@ -1,6 +1,6 @@
 _schema-version: 3.3.0
 ID: error-plugin
-version: 1.0.3
+version: 1.0.4
 description: "A simple CAP project."
 parameters:
   enable-parallel-deployments: true
