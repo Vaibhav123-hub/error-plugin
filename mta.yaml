@@ -1,6 +1,6 @@
 _schema-version: 3.3.0
 ID: error-plugin
-version: 1.0.0
+version: 1.0.1
 description: "A simple CAP project."
 parameters:
   enable-parallel-deployments: true
@@ -139,6 +139,10 @@ resources:
     parameters:
       service: destination
       service-plan: lite
+      config:
+        # makes this instance's destinations visible to Work Zone's managed runtime,
+        # which is how the site discovers the plugin in the HTML5 repo
+        HTML5Runtime_enabled: true
     requires:
       - name: srv-api
 
