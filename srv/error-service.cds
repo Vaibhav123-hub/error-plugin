@@ -37,7 +37,9 @@ service ErrorLogService {
     stack          : LargeString,
     additionalInfo : LargeString,
     tcode          : String,
-    program        : String
+    program        : String,
+    occurrences    : Integer,          // repeats already merged by the caller (default 1)
+    lastOccurredAt : Timestamp
   ) returns ErrorLogs;
 
   // Batch variant so a caller can flush several messages (e.g. after being offline) in one round trip.
@@ -59,5 +61,7 @@ service ErrorLogService {
     additionalInfo : LargeString;
     tcode          : String;
     program        : String;
+    occurrences    : Integer;
+    lastOccurredAt : Timestamp;
   }) returns Integer;
 }
