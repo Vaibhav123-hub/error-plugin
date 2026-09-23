@@ -31,6 +31,16 @@ File or Folder | Purpose
    `window.onerror` / `unhandledrejection` for uncaught JS errors. This
    covers messages from standard SAP apps and custom-built apps the same
    way, since both use the same standard UI5 controls/APIs.
+   It also wraps `fetch` and `XMLHttpRequest` to record **failed service
+   calls** (`source: HttpError`): any 4xx/5xx response or network failure,
+   plus individual failed operations inside an OData `$batch` (which
+   itself returns 200). The OData error message/code is extracted from the
+   response body. Static resources are skipped via
+   `httpErrorIgnoreUrlPatterns`, and the plugin never reports its own calls.
+   Apps Work Zone loads into a **same-origin iframe** get the same
+   instrumentation (MessageBox, MessageToast, message model, JS errors,
+   service calls) as soon as their frame loads; cross-origin frames can't
+   be reached by design.
 2. Every captured message is enriched with the current app context
    (semantic-object/action, app title, whether it looks like a standard SAP
    app or a custom one, URL, user agent) resolved via
@@ -163,6 +173,13 @@ for the trade-offs.
   (`sap.ui5/config/errorCapture/standardAppNamespacePrefixes` in
   `manifest.json`, default `sap.`/`com.sap.`) — adjust it to match your
   landscape's naming conventions for custom apps.
+- A failed service call and the error dialog an app shows for it are two
+  rows (`HttpError` + `MessageBox`), again by design.
+- Errors only written to the browser console (`console.error`, UI5
+  `Log.error`) aren't captured — they're not shown to the user and are
+  mostly framework noise.
+- `MessageToast` is only stored when `Information` is in
+  `capturedSeverities` (default: `Error`, `Warning` only).
 - CSRF token handling in `MessageInterceptor.js` is best-effort: it fetches
   a token if the backend requires one (as most CAP-behind-approuter setups
   do) and proceeds without one if the `GET` doesn't return a token (e.g.
