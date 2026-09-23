@@ -68,6 +68,15 @@ modules:
               ServiceInstanceName: error-plugin-auth
               ServiceKeyName: error-plugin-auth-key
               sap.cloud.service: errorplugin.service
+            # target of the plugin's xs-app.json /odata/* route; Work Zone's managed
+            # router only resolves destinations from this HTML5-runtime-enabled instance
+            - Name: srv-api
+              URL: ~{srv-api/srv-url}
+              Authentication: NoAuthentication
+              Type: HTTP
+              ProxyType: Internet
+              HTML5.ForwardAuthToken: true
+              HTML5.DynamicDestination: true
 
   - name: error-plugin-app-deployer
     type: com.sap.application.content
@@ -87,16 +96,6 @@ modules:
           content-target: true
           config:
             HTML5Runtime_enabled: true
-    parameters:
-      config:
-        destinations:
-          - Name: srv-api
-            URL: ~{srv-api/srv-url}
-            Authentication: NoAuthentication
-            Type: HTTP
-            ProxyType: Internet
-            ForwardAuthToken: true
-            DynamicDestination: true
 
   - name: error-plugin-ui
     type: html5
