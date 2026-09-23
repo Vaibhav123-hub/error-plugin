@@ -108,7 +108,7 @@ resources:
       service-plan: application
       path: ./xs-security.json
       config:
-        xsappname: error-plugin-${org}-${space}
+        xsappname: error-plugin
         tenant-mode: dedicated
         oauth2-configuration:
           credential-types:
