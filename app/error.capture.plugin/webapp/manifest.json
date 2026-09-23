@@ -5,7 +5,7 @@
     "type": "component",
     "i18n": "i18n/i18n.properties",
     "applicationVersion": {
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "title": "{{appTitle}}",
     "description": "{{appDescription}}",
@@ -44,6 +44,16 @@
         "capturedSeverities": [ "Error", "Warning" ],
         "captureMessageToast": true,
         "captureUnhandledJsErrors": true,
+        "captureHttpErrors": true,
+        "httpErrorIgnoreUrlPatterns": [
+          "\\.(js|css|properties|xml|json|woff2?|ttf|png|jpe?g|gif|svg|ico|map)(\\?|$)",
+          "/resources/",
+          "/test-resources/",
+          "sessionKeepAlive",
+          "/logout"
+        ],
+        "httpErrorMaxBodyLength": 2000,
+        "captureSameOriginIframes": true,
         "flushIntervalMs": 5000,
         "maxQueueLength": 200,
         "maxStoredOffline": 500,
