@@ -163,18 +163,20 @@ for the trade-offs.
 
 ## Notes / known limitations
 
-- The same underlying error can legitimately surface through more than one
-  channel (e.g. a Fiori Elements save error shown as both a `MessageBox` and
-  a message-model entry) — both are captured as separate rows by design; if
-  you need deduplication, do it downstream (e.g. group by
-  `message`+`appId` within a short time window) rather than suppressing
-  capture.
+- **One row per distinct error.** An error is identified by severity,
+  message, message code, app and (for ABAP) t-code/program — not by source,
+  user or URL. The same error reported again within `duplicateWindowMs`
+  (default 2s) is treated as the same trigger surfacing through another
+  channel (e.g. a failed call recorded as `HttpError` *and* the `MessageBox`
+  showing it) and recorded once, under whichever channel saw it first.
+  A later repeat increments `occurrences` and updates `lastOccurredAt` /
+  `lastUserId`; `timestamp` / `userId` stay those of the first occurrence.
+  Errors whose texts differ (e.g. an app shows its own wording for a failed
+  call) are still separate rows.
 - `standardApp` is a heuristic based on the component id prefix
   (`sap.ui5/config/errorCapture/standardAppNamespacePrefixes` in
   `manifest.json`, default `sap.`/`com.sap.`) — adjust it to match your
   landscape's naming conventions for custom apps.
-- A failed service call and the error dialog an app shows for it are two
-  rows (`HttpError` + `MessageBox`), again by design.
 - Errors only written to the browser console (`console.error`, UI5
   `Log.error`) aren't captured — they're not shown to the user and are
   mostly framework noise.

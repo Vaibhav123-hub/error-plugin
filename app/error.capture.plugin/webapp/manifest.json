@@ -5,7 +5,7 @@
     "type": "component",
     "i18n": "i18n/i18n.properties",
     "applicationVersion": {
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     "title": "{{appTitle}}",
     "description": "{{appDescription}}",
@@ -54,6 +54,7 @@
         ],
         "httpErrorMaxBodyLength": 2000,
         "captureSameOriginIframes": true,
+        "duplicateWindowMs": 2000,
         "flushIntervalMs": 5000,
         "maxQueueLength": 200,
         "maxStoredOffline": 500,
