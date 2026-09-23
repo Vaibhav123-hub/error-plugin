@@ -121,9 +121,8 @@ sap.ui.define([
 	}
 
 	function _capture(mEntry) {
-		var sNow = new Date().toISOString();
 		var oEntry = Object.assign({
-			timestamp: sNow,
+			timestamp: new Date().toISOString(),
 			appId: _oAppContext.appId,
 			appTitle: _oAppContext.appTitle,
 			tileId: _oAppContext.tileId,
@@ -139,22 +138,12 @@ sap.ui.define([
 		Object.keys(_mLastSeen).forEach(function (sOtherKey) { // keep the map small
 			if (iNow - _mLastSeen[sOtherKey] > _oConfig.duplicateWindowMs) { delete _mLastSeen[sOtherKey]; }
 		});
-		// the same error again within the window is the same trigger reported by another channel - record it once
+		// the same error again within the window is the same interaction reported by another channel (e.g. the
+		// failed call as HttpError and the MessageBox showing it) - record it once. Later repeats are new rows.
 		if (iLastSeen !== undefined && iNow - iLastSeen <= _oConfig.duplicateWindowMs) {
 			return;
 		}
 
-		// a genuine repeat that hasn't been sent yet - count it on the queued entry instead of queueing another row
-		var oQueued = _aQueue.filter(function (oCandidate) { return _errorKey(oCandidate) === sKey; })[0];
-		if (oQueued) {
-			oQueued.occurrences = (oQueued.occurrences || 1) + 1;
-			oQueued.lastOccurredAt = sNow;
-			_persistQueue();
-			return;
-		}
-
-		oEntry.occurrences = 1;
-		oEntry.lastOccurredAt = sNow;
 		_aQueue.push(oEntry);
 		_persistQueue();
 

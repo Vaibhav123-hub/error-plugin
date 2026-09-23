@@ -38,7 +38,9 @@ service ErrorLogService {
     additionalInfo : LargeString,
     tcode          : String,
     program        : String,
-    occurrences    : Integer,          // repeats already merged by the caller (default 1)
+    // occurrences/lastOccurredAt: sent by plugin 1.0.3 - still accepted so its queued messages aren't
+    // rejected (CAP refuses unknown properties), but ignored: every occurrence is its own row now
+    occurrences    : Integer,
     lastOccurredAt : Timestamp
   ) returns ErrorLogs;
 
@@ -61,7 +63,7 @@ service ErrorLogService {
     additionalInfo : LargeString;
     tcode          : String;
     program        : String;
-    occurrences    : Integer;
+    occurrences    : Integer;          // accepted from plugin 1.0.3 queues, ignored (see logError)
     lastOccurredAt : Timestamp;
   }) returns Integer;
 }

@@ -34,10 +34,7 @@ entity ErrorLogs : cuid, managed {
   additionalInfo : LargeString;               // any extra JSON-stringified context sent by the caller
   tcode          : String(20);                // ABAP transaction code, for ABAPMessage / WebDynproABAP
   program        : String(40);                // ABAP program/include (sy-repid), for ABAPMessage / WebDynproABAP
-  // One row per distinct error: repeats increment occurrences instead of adding rows.
-  // `timestamp`/`userId` describe the first occurrence, these the latest.
-  occurrences    : Integer default 1;
-  lastOccurredAt : Timestamp;
-  lastUserId     : String(100);
-  fingerprint    : String(40);                // sha1 of severity/message/code/app/tcode/program - see srv/error-service.js
+  // Same value for every occurrence of the same error (sha1 of severity/message/code/app/tcode/program,
+  // see srv/error-service.js) - group or count by it to see how often an error repeats.
+  fingerprint    : String(40);
 }
