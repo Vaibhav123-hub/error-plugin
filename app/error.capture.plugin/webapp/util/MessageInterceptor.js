@@ -22,6 +22,8 @@ sap.ui.define([
 	var _oInstrumentedWindows = new WeakSet();
 	var _iFlushIntervalId = null;
 	var _iHashChangeTimeoutId = null;
+	var _iMessageBoxDepth = 0;
+	var _mLastSeen = {}; // error key -> ms timestamp of the last capture, for collapsing one trigger's channels
 
 	function _isCapturedSeverity(sSeverity) {
 		return _oConfig.capturedSeverities.indexOf(sSeverity) !== -1;
@@ -110,9 +112,18 @@ sap.ui.define([
 	// Capture + queue + transport
 	// ---------------------------------------------------------------------
 
+	// Identifies "the same error" - deliberately without the source, so one failure surfacing as HttpError,
+	// MessageBox and message-model entry at once is one error. Must match fingerprint() in srv/error-service.js.
+	function _errorKey(oEntry) {
+		return [oEntry.severity, oEntry.message, oEntry.messageCode, oEntry.appId, oEntry.tcode, oEntry.program]
+			.map(function (v) { return v == null ? "" : String(v).replace(/\s+/g, " ").trim(); })
+			.join("\u0001");
+	}
+
 	function _capture(mEntry) {
+		var sNow = new Date().toISOString();
 		var oEntry = Object.assign({
-			timestamp: new Date().toISOString(),
+			timestamp: sNow,
 			appId: _oAppContext.appId,
 			appTitle: _oAppContext.appTitle,
 			tileId: _oAppContext.tileId,
@@ -121,6 +132,29 @@ sap.ui.define([
 			userAgent: navigator.userAgent
 		}, mEntry);
 
+		var sKey = _errorKey(oEntry);
+		var iNow = Date.now();
+		var iLastSeen = _mLastSeen[sKey];
+		_mLastSeen[sKey] = iNow;
+		Object.keys(_mLastSeen).forEach(function (sOtherKey) { // keep the map small
+			if (iNow - _mLastSeen[sOtherKey] > _oConfig.duplicateWindowMs) { delete _mLastSeen[sOtherKey]; }
+		});
+		// the same error again within the window is the same trigger reported by another channel - record it once
+		if (iLastSeen !== undefined && iNow - iLastSeen <= _oConfig.duplicateWindowMs) {
+			return;
+		}
+
+		// a genuine repeat that hasn't been sent yet - count it on the queued entry instead of queueing another row
+		var oQueued = _aQueue.filter(function (oCandidate) { return _errorKey(oCandidate) === sKey; })[0];
+		if (oQueued) {
+			oQueued.occurrences = (oQueued.occurrences || 1) + 1;
+			oQueued.lastOccurredAt = sNow;
+			_persistQueue();
+			return;
+		}
+
+		oEntry.occurrences = 1;
+		oEntry.lastOccurredAt = sNow;
 		_aQueue.push(oEntry);
 		_persistQueue();
 
@@ -228,23 +262,32 @@ sap.ui.define([
 			if (typeof fnOriginal !== "function" || fnOriginal.__errorCapturePatched) { return; }
 
 			var fnWrapped = function () {
-				try {
-					var vMessage = arguments[0];
-					var mOptions = arguments[1] || {};
-					var sSeverity = _messageBoxSeverity(oMessageBox, sMethod, mOptions);
-					if (_isCapturedSeverity(sSeverity)) {
-						_capture({
-							severity: sSeverity,
-							message: typeof vMessage === "string" ? vMessage : String(vMessage),
-							description: mOptions.details ? _stringifyDetails(mOptions.details) : undefined,
-							messageCode: mOptions.messageCode,
-							source: "MessageBox"
-						});
+				// error()/warning()/alert()/... are implemented by calling MessageBox.show(), which is patched
+				// too - only the outermost call is captured, or every dialog would be recorded twice
+				if (_iMessageBoxDepth === 0) {
+					try {
+						var vMessage = arguments[0];
+						var mOptions = arguments[1] || {};
+						var sSeverity = _messageBoxSeverity(oMessageBox, sMethod, mOptions);
+						if (_isCapturedSeverity(sSeverity)) {
+							_capture({
+								severity: sSeverity,
+								message: typeof vMessage === "string" ? vMessage : String(vMessage),
+								description: mOptions.details ? _stringifyDetails(mOptions.details) : undefined,
+								messageCode: mOptions.messageCode,
+								source: "MessageBox"
+							});
+						}
+					} catch (oError) {
+						Log.warning("Error Capture Plugin: failed to intercept MessageBox." + sMethod, oError);
 					}
-				} catch (oError) {
-					Log.warning("Error Capture Plugin: failed to intercept MessageBox." + sMethod, oError);
 				}
-				return fnOriginal.apply(oMessageBox, arguments);
+				_iMessageBoxDepth++;
+				try {
+					return fnOriginal.apply(oMessageBox, arguments);
+				} finally {
+					_iMessageBoxDepth--;
+				}
 			};
 			fnWrapped.__errorCapturePatched = true;
 			oMessageBox[sMethod] = fnWrapped;
@@ -687,6 +730,7 @@ sap.ui.define([
 				httpErrorIgnoreUrlPatterns: [],
 				httpErrorMaxBodyLength: 2000,
 				captureSameOriginIframes: true,
+				duplicateWindowMs: 2000,
 				flushIntervalMs: 5000,
 				maxQueueLength: 200,
 				maxStoredOffline: 500,
