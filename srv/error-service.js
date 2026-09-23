@@ -3,8 +3,14 @@ import cds from '@sap/cds';
 const VALID_SEVERITIES = ['Error', 'Warning', 'Success', 'Information'];
 const VALID_SOURCES = [
   'MessageBox', 'MessageToast', 'MessagePopover', 'MessageManager', 'JSError', 'UnhandledRejection',
-  'ABAPMessage', 'WebDynproABAP'
+  'HttpError', 'ABAPMessage', 'WebDynproABAP'
 ];
+
+// Truncate to the column length from db/schema.cds: HANA rejects the whole INSERT (and so the whole
+// batch, which the plugin then re-queues forever) if a single value is too long.
+function clip(value, maxLength) {
+  return typeof value === 'string' && value.length > maxLength ? value.slice(0, maxLength) : value;
+}
 
 function normalize(entry, req) {
   return {
@@ -12,20 +18,20 @@ function normalize(entry, req) {
     severity: VALID_SEVERITIES.includes(entry.severity) ? entry.severity : 'Error',
     message: entry.message,
     description: entry.description,
-    messageCode: entry.messageCode,
+    messageCode: clip(entry.messageCode, 50),
     source: VALID_SOURCES.includes(entry.source) ? entry.source : 'MessageBox',
-    appId: entry.appId,
-    appTitle: entry.appTitle,
-    tileId: entry.tileId,
+    appId: clip(entry.appId, 100),
+    appTitle: clip(entry.appTitle, 200),
+    tileId: clip(entry.tileId, 100),
     standardApp: !!entry.standardApp,
     url: entry.url,
-    userId: req.user?.id,
-    client: entry.client,
-    userAgent: entry.userAgent,
+    userId: clip(req.user?.id, 100),
+    client: clip(entry.client, 10),
+    userAgent: clip(entry.userAgent, 400),
     stack: entry.stack,
     additionalInfo: entry.additionalInfo,
-    tcode: entry.tcode,
-    program: entry.program
+    tcode: clip(entry.tcode, 20),
+    program: clip(entry.program, 40)
   };
 }
 

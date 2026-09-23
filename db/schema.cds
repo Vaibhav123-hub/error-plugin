@@ -19,6 +19,7 @@ entity ErrorLogs : cuid, managed {
   messageCode    : String(50);                // backend message code (OData error, or ABAP "<msgid>/<msgno>")
   source         : String(30) enum {                 // where the message was raised/intercepted
     MessageBox; MessageToast; MessagePopover; MessageManager; JSError; UnhandledRejection;
+    HttpError;                                // failed service call (fetch/XHR 4xx/5xx or failed $batch operation)
     ABAPMessage; WebDynproABAP;               // reported by ABAP - see abap/README.md
   };
   appId          : String(100);               // semantic object-action / component id (UI5) or t-code (ABAP)

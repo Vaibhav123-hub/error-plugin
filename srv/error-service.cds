@@ -17,44 +17,47 @@ service ErrorLogService {
   // tiles, which the browser-side plugin can't see into (see abap/README.md).
   // Kept as an action (rather than exposing ErrorLogs for direct CREATE) so the
   // server can stamp timestamp/userId and reject fields the client shouldn't set.
+  // Parameters are deliberately unbounded String: a declared length would make CAP reject the
+  // whole call (and so the plugin's whole batch) for one over-long value - error-service.js
+  // truncates to the column lengths in db/schema.cds instead.
   action logError (
     timestamp      : Timestamp,
-    severity       : String(20),
+    severity       : String,
     message        : LargeString,
     description    : LargeString,
-    messageCode    : String(50),
-    source         : String(30),
-    appId          : String(100),
-    appTitle       : String(200),
-    tileId         : String(100),
+    messageCode    : String,
+    source         : String,
+    appId          : String,
+    appTitle       : String,
+    tileId         : String,
     standardApp    : Boolean,
     url            : LargeString,
-    client         : String(10),
-    userAgent      : String(400),
+    client         : String,
+    userAgent      : String,
     stack          : LargeString,
     additionalInfo : LargeString,
-    tcode          : String(20),
-    program        : String(40)
+    tcode          : String,
+    program        : String
   ) returns ErrorLogs;
 
   // Batch variant so a caller can flush several messages (e.g. after being offline) in one round trip.
   action logErrors ( entries : many {
     timestamp      : Timestamp;
-    severity       : String(20);
+    severity       : String;
     message        : LargeString;
     description    : LargeString;
-    messageCode    : String(50);
-    source         : String(30);
-    appId          : String(100);
-    appTitle       : String(200);
-    tileId         : String(100);
+    messageCode    : String;
+    source         : String;
+    appId          : String;
+    appTitle       : String;
+    tileId         : String;
     standardApp    : Boolean;
     url            : LargeString;
-    client         : String(10);
-    userAgent      : String(400);
+    client         : String;
+    userAgent      : String;
     stack          : LargeString;
     additionalInfo : LargeString;
-    tcode          : String(20);
-    program        : String(40);
+    tcode          : String;
+    program        : String;
   }) returns Integer;
 }
