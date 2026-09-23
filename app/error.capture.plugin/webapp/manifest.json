@@ -5,11 +5,25 @@
     "type": "component",
     "i18n": "i18n/i18n.properties",
     "applicationVersion": {
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "title": "{{appTitle}}",
     "description": "{{appDescription}}",
-    "ach": "CA-UI5-FE-SHL"
+    "ach": "CA-UI5-FE-SHL",
+    "crossNavigation": {
+      "inbounds": {
+        "Shell-plugin": {
+          "semanticObject": "Shell",
+          "action": "plugin",
+          "title": "{{appTitle}}",
+          "hideLauncher": true,
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          }
+        }
+      }
+    }
   },
   "sap.ui": {
     "technology": "UI5",
