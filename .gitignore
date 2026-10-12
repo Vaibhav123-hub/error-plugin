@@ -18,3 +18,6 @@ mta_archives/
 
 # @cap-js/cds-typer
 @cds-models
+
+# Word documents kept locally for our own reference - not part of the repo
+*.docx
