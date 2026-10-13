@@ -1,42 +1,11 @@
 _schema-version: 3.3.0
 ID: error-plugin
-version: 1.0.4
-description: "A simple CAP project."
+version: 2.1.0
+description: "Fiori Launchpad plugin that captures error messages and opens Ask AI for them."
 parameters:
   enable-parallel-deployments: true
   deploy_mode: html5-repo
-build-parameters:
-  before-all:
-    - builder: custom
-      commands:
-        - npm ci
-        - npx cds build --production
 modules:
-  - name: error-plugin-srv
-    type: nodejs
-    path: gen/srv
-    parameters:
-      instances: 1
-      buildpack: nodejs_buildpack
-    build-parameters:
-      builder: npm-ci
-    provides:
-      - name: srv-api # required by consumers of CAP services (e.g. approuter)
-        properties:
-          srv-url: ${default-url}
-    requires:
-      - name: error-plugin-auth
-      - name: error-plugin-db
-      - name: error-plugin-destination
-
-  - name: error-plugin-db-deployer
-    type: hdb
-    path: gen/db
-    parameters:
-      buildpack: nodejs_buildpack
-    requires:
-      - name: error-plugin-db
-
   - name: error-plugin-destinations
     type: com.sap.application.content
     requires:
@@ -48,7 +17,6 @@ modules:
         parameters:
           service-key:
             name: error-plugin-html5-repo-host-key
-      - name: srv-api
       - name: error-plugin-destination
         parameters:
           content-target: true
@@ -81,7 +49,6 @@ modules:
           target-path: app/
     requires:
       - name: error-plugin-auth
-      - name: srv-api
       - name: error-plugin-html5-repo-host
         parameters:
           content-target: true
@@ -114,16 +81,6 @@ resources:
           credential-types:
             - "binding-secret"
             - "x509"
-        role-collections:
-          - name: 'ErrorLogAdmin (error-plugin ${org}-${space})'
-            description: 'generated'
-            role-template-references:
-              - '$XSAPPNAME.ErrorLogAdmin'
-  - name: error-plugin-db
-    type: com.sap.xs.hdi-container
-    parameters:
-      service: hana
-      service-plan: hdi-shared
   - name: error-plugin-destination
     type: org.cloudfoundry.managed-service
     parameters:
@@ -133,22 +90,6 @@ resources:
         # makes this instance's destinations visible to Work Zone's managed runtime,
         # which is how the site discovers the plugin in the HTML5 repo
         HTML5Runtime_enabled: true
-        init_data:
-          instance:
-            existing_destinations_policy: update
-            destinations:
-              # target of the plugin's xs-app.json /odata/* route. URL destinations
-              # can't go in the error-plugin-destinations content module, which only
-              # accepts service-instance destinations.
-              - Name: srv-api
-                URL: ~{srv-api/srv-url}
-                Authentication: NoAuthentication
-                Type: HTTP
-                ProxyType: Internet
-                HTML5.ForwardAuthToken: true
-                HTML5.DynamicDestination: true
-    requires:
-      - name: srv-api
 
   - name: error-plugin-html5-repo-host
     type: org.cloudfoundry.managed-service

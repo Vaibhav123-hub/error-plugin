@@ -1,19 +1,5 @@
 {
-  "scopes": [
-    {
-      "name": "$XSAPPNAME.ErrorLogAdmin",
-      "description": "ErrorLogAdmin"
-    }
-  ],
+  "scopes": [],
   "attributes": [],
-  "role-templates": [
-    {
-      "name": "ErrorLogAdmin",
-      "description": "generated",
-      "scope-references": [
-        "$XSAPPNAME.ErrorLogAdmin"
-      ],
-      "attribute-references": []
-    }
-  ]
+  "role-templates": []
 }

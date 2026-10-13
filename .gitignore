@@ -4,9 +4,7 @@ _out/
 gen/
 dist/
 
-.cdsrc-private.json
 default-*.json
-*.sqlite
 
 # MTA
 mta_archives/
@@ -16,8 +14,6 @@ mta_archives/
 # Other
 .DS_Store
 
-# @cap-js/cds-typer
-@cds-models
 
 # Word documents kept locally for our own reference - not part of the repo
 *.docx

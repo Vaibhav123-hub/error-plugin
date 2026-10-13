@@ -3,8 +3,9 @@
   "tasks": [
     {
       "type": "shell",
-      "label": "cds watch",
-      "command": "cds watch",
+      "label": "plugin sandbox",
+      "command": "npm start",
+      "options": { "cwd": "${workspaceFolder}/app/error.capture.plugin" }
     }
   ]
 }
