@@ -1,43 +1,32 @@
 sap.ui.define([
 	"sap/m/MessageBox",
-	"sap/m/MessageToast",
+	"sap/m/Button",
+	"sap/ui/core/Element",
 	"sap/base/Log"
-], function (MessageBox, MessageToast, Log) {
+], function (MessageBox, Button, Element, Log) {
 	"use strict";
 
-	var STORAGE_KEY = "errorCapturePlugin.queue";
 	var UI5_WAIT_INTERVAL_MS = 250;
 	var UI5_WAIT_MAX_ATTEMPTS = 120; // give an iframe app ~30s to boot UI5 before giving up on it
-	var MAX_BATCH_FAILURES = 10;     // cap rows per $batch response, so one bad batch can't flood the queue
+	var MAX_BATCH_FAILURES = 10;     // cap errors per $batch response, so one bad batch can't flood the list
+	var MAX_RECENT = 20;             // captured errors kept in memory for matching channels of one interaction
 
 	var _bInitialized = false;
 	var _bUnloading = false;
 	var _oConfig = {};
-	var _aQueue = [];
-	var _sCsrfToken = null;
-	var _sBackendAbsoluteUrl = "";
+	var _mHandlers = {};
+	var _aRecent = [];               // most recent last
 	var _aHttpIgnorePatterns = [];
+	var _aMessageIgnorePatterns = [];
 	var _oAppContext = {};
+	var _sCurrentIntent;
 	var _aCleanup = [];
 	var _oInstrumentedWindows = new WeakSet();
-	var _iFlushIntervalId = null;
 	var _iHashChangeTimeoutId = null;
-	var _iMessageBoxDepth = 0;
-	var _mLastSeen = {}; // error key -> ms timestamp of the last capture, for collapsing one trigger's channels
+	var _iMessageBoxCount = 0;
 
 	function _isCapturedSeverity(sSeverity) {
 		return _oConfig.capturedSeverities.indexOf(sSeverity) !== -1;
-	}
-
-	// A relative backendBaseUrl (the default) is resolved against the plugin's own resource root, so the
-	// request goes through the plugin's approuter routes (xs-app.json) - the plugin runs inside the FLP page,
-	// whose own origin/path has no such routes. Absolute ("/..." or "http(s)://...") URLs are used as given.
-	function _resolveBackendBaseUrl(sUrl) {
-		var sTrimmed = String(sUrl).replace(/\/+$/, "");
-		if (sTrimmed.charAt(0) === "/" || /^[a-z][a-z0-9+.-]*:/i.test(sTrimmed)) {
-			return sTrimmed;
-		}
-		return sap.ui.require.toUrl("error/capture/plugin").replace(/\/+$/, "") + "/" + sTrimmed;
 	}
 
 	function _toAbsoluteUrl(sUrl, oWin) {
@@ -48,268 +37,236 @@ sap.ui.define([
 		}
 	}
 
-	function _stringifyDetails(vDetails) {
+	function _compileRegExps(aPatterns, sConfigName) {
+		return (aPatterns || []).reduce(function (aRegExps, sPattern) {
+			try {
+				aRegExps.push(new RegExp(sPattern, "i"));
+			} catch (e) {
+				Log.warning("Error Capture Plugin: ignoring invalid " + sConfigName + " entry " + sPattern);
+			}
+			return aRegExps;
+		}, []);
+	}
+
+	function _normalizeText(v) {
+		return v == null ? "" : String(v).replace(/\s+/g, " ").trim();
+	}
+
+	// SAP message codes arrive as "<message class>/<number>" - OData V2 Gateway and RAP error codes (e.g. "M3/305"),
+	// or what an app passes itself. The class may contain slashes of its own ("/IWBEP/CM_MGW_RT/020"), so the
+	// number is whatever follows the last one. Anything else (HTTP_500, app-specific codes) has no message id/number.
+	function _parseSapMessageCode(sCode) {
+		var oMatch = /^(.+)\/(\d{3})$/.exec(_normalizeText(sCode));
+		return oMatch ? { messageId: oMatch[1], messageNumber: oMatch[2] } : {};
+	}
+
+	// ---------------------------------------------------------------------
+	// App context (which app on the FLP raised the message)
+	// ---------------------------------------------------------------------
+
+	function _parseIntent() {
 		try {
-			return typeof vDetails === "string" ? vDetails : JSON.stringify(vDetails);
+			var oMatch = /#([^&/?]+)-([^&/?~]+)/.exec(window.location.hash || "");
+			return oMatch ? oMatch[1] + "-" + oMatch[2] : undefined;
 		} catch (e) {
 			return undefined;
 		}
 	}
 
-	// ---------------------------------------------------------------------
-	// App / tile context (which app on the FLP raised the message)
-	// ---------------------------------------------------------------------
-
-	function _parseHash() {
-		var oResult = { appId: undefined, tileId: undefined };
-		try {
-			var sHash = window.location.hash || "";
-			var oMatch = /#([^&/?]+)-([^&/?~]+)/.exec(sHash);
-			if (oMatch) {
-				oResult.appId = oMatch[1] + "-" + oMatch[2];
-				oResult.tileId = oResult.appId;
-			}
-		} catch (e) { /* ignore, best effort */ }
-		return oResult;
-	}
-
-	function _isStandardApp(sComponentId) {
-		if (!sComponentId) { return false; }
-		return _oConfig.standardAppNamespacePrefixes.some(function (sPrefix) {
-			return sComponentId.indexOf(sPrefix) === 0;
-		});
-	}
-
 	function _refreshAppContext() {
-		var oHashInfo = _parseHash();
-		_oAppContext.appId = oHashInfo.appId;
-		_oAppContext.tileId = oHashInfo.tileId;
-		_oAppContext.appTitle = document.title;
+		_oAppContext = { appId: _parseIntent(), appTitle: document.title };
 
 		if (!(window.sap && sap.ushell && sap.ushell.Container && sap.ushell.Container.getServiceAsync)) {
 			return;
 		}
+		var oContext = _oAppContext;
 		sap.ushell.Container.getServiceAsync("AppLifeCycle").then(function (oAppLifeCycle) {
 			var oCurrentApp = oAppLifeCycle.getCurrentApplication && oAppLifeCycle.getCurrentApplication();
 			var oComponent = oCurrentApp && oCurrentApp.componentInstance;
 			if (!oComponent || !oComponent.getManifestEntry) { return; }
 			var oAppManifest = oComponent.getManifestEntry("sap.app") || {};
-			_oAppContext.appId = oAppManifest.id || _oAppContext.appId;
-			_oAppContext.appTitle = (oAppManifest.title && oAppManifest.title.indexOf("{{") !== 0 ? oAppManifest.title : _oAppContext.appTitle) || _oAppContext.appTitle;
-			_oAppContext.standardApp = _isStandardApp(oAppManifest.id);
+			oContext.appId = oAppManifest.id || oContext.appId;
+			if (oAppManifest.title && oAppManifest.title.indexOf("{{") !== 0) {
+				oContext.appTitle = oAppManifest.title;
+			}
 		}).catch(function (oError) {
 			Log.warning("Error Capture Plugin: could not resolve current app context", oError);
 		});
 	}
 
 	function _onHashChange() {
+		var sIntent = _parseIntent();
+		if (sIntent !== _sCurrentIntent) {
+			// another app (or home) is now open: errors captured in the previous one are no longer relevant.
+			// In-app navigation (same intent, different inner route) keeps them.
+			_sCurrentIntent = sIntent;
+			_aRecent = [];
+			if (_mHandlers.onClear) { _mHandlers.onClear(); }
+		}
 		window.clearTimeout(_iHashChangeTimeoutId);
 		// small delay so the new app component/manifest is available once its Component has loaded
 		_iHashChangeTimeoutId = window.setTimeout(_refreshAppContext, 400);
 	}
 
 	// ---------------------------------------------------------------------
-	// Capture + queue + transport
+	// Capture
 	// ---------------------------------------------------------------------
 
-	// Identifies "the same error" - deliberately without the source, so one failure surfacing as HttpError,
-	// MessageBox and message-model entry at once is one error. Must match fingerprint() in srv/error-service.js.
-	function _errorKey(oEntry) {
-		return [oEntry.severity, oEntry.message, oEntry.messageCode, oEntry.appId, oEntry.tcode, oEntry.program]
-			.map(function (v) { return v == null ? "" : String(v).replace(/\s+/g, " ").trim(); })
-			.join("\u0001");
+	// The same text again is the same error, and stays one entry - the user sees one row per distinct error:
+	// - within duplicateWindowMs it is one interaction surfacing through several channels: a failed call (HttpError,
+	//   carrying the SAP message code) and the dialog/message showing its text (usually without the code). Merging them
+	//   means whichever channel the user asks AI from gets the message id/number too.
+	// - later, it is the error happening again, counted in occurrences.
+	function _findSameError(oEntry) {
+		var sText = _normalizeText(oEntry.message);
+		for (var i = _aRecent.length - 1; i >= 0; i--) {
+			if (_normalizeText(_aRecent[i].message) === sText) { return _aRecent[i]; }
+		}
+		return null;
 	}
 
+	// Returns the entry describing the error - a merged earlier one if this is the same interaction - or null if
+	// the message is ignored.
 	function _capture(mEntry) {
+		var sMessage = _normalizeText(mEntry.message);
+		if (!sMessage || _aMessageIgnorePatterns.some(function (oPattern) { return oPattern.test(sMessage); })) {
+			return null;
+		}
+
 		var oEntry = Object.assign({
-			timestamp: new Date().toISOString(),
+			capturedAt: Date.now(),
+			occurrences: 1,
 			appId: _oAppContext.appId,
-			appTitle: _oAppContext.appTitle,
-			tileId: _oAppContext.tileId,
-			standardApp: !!_oAppContext.standardApp,
-			url: window.location.href,
-			userAgent: navigator.userAgent
-		}, mEntry);
+			appTitle: _oAppContext.appTitle
+		}, mEntry, _parseSapMessageCode(mEntry.messageCode));
 
-		var sKey = _errorKey(oEntry);
-		var iNow = Date.now();
-		var iLastSeen = _mLastSeen[sKey];
-		_mLastSeen[sKey] = iNow;
-		Object.keys(_mLastSeen).forEach(function (sOtherKey) { // keep the map small
-			if (iNow - _mLastSeen[sOtherKey] > _oConfig.duplicateWindowMs) { delete _mLastSeen[sOtherKey]; }
-		});
-		// the same error again within the window is the same interaction reported by another channel (e.g. the
-		// failed call as HttpError and the MessageBox showing it) - record it once. Later repeats are new rows.
-		if (iLastSeen !== undefined && iNow - iLastSeen <= _oConfig.duplicateWindowMs) {
-			return;
-		}
-
-		_aQueue.push(oEntry);
-		_persistQueue();
-
-		if (_aQueue.length >= _oConfig.maxQueueLength) {
-			_flush();
-		}
-	}
-
-	function _persistQueue() {
-		try {
-			var aToStore = _aQueue.slice(-_oConfig.maxStoredOffline);
-			window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(aToStore));
-		} catch (e) { /* storage may be unavailable (private mode / quota) - queue stays in memory only */ }
-	}
-
-	function _restoreQueue() {
-		try {
-			var sStored = window.sessionStorage.getItem(STORAGE_KEY);
-			if (sStored) {
-				_aQueue = JSON.parse(sStored).concat(_aQueue);
+		var oSame = _findSameError(oEntry);
+		if (oSame) {
+			if (oEntry.capturedAt - oSame.capturedAt > _oConfig.duplicateWindowMs) {
+				oSame.occurrences++;
 			}
-		} catch (e) { /* ignore corrupt/unavailable storage */ }
-	}
-
-	function _ensureCsrfToken() {
-		if (_sCsrfToken) { return Promise.resolve(_sCsrfToken); }
-		return fetch(_oConfig.backendBaseUrl + "/", {
-			method: "GET",
-			credentials: "same-origin",
-			headers: { "X-CSRF-Token": "Fetch" }
-		}).then(function (oResponse) {
-			_sCsrfToken = oResponse.headers.get("X-CSRF-Token");
-			return _sCsrfToken;
-		}).catch(function () {
-			return null; // backend may not require CSRF at all (e.g. plain cds-serve) - proceed without it
-		});
-	}
-
-	function _sendBatch(aBatch) {
-		return _ensureCsrfToken().then(function (sToken) {
-			var mHeaders = { "Content-Type": "application/json" };
-			if (sToken) { mHeaders["X-CSRF-Token"] = sToken; }
-			return fetch(_oConfig.backendBaseUrl + "/logErrors", {
-				method: "POST",
-				credentials: "same-origin",
-				keepalive: true,
-				headers: mHeaders,
-				body: JSON.stringify({ entries: aBatch })
+			// keep the first entry (a MessageBox's Ask AI button already holds it) and fill in what it lacked
+			["messageCode", "messageId", "messageNumber"].forEach(function (sField) {
+				if (!oSame[sField] && oEntry[sField]) { oSame[sField] = oEntry[sField]; }
 			});
-		});
-	}
+			oSame.capturedAt = oEntry.capturedAt;
+			_aRecent.splice(_aRecent.indexOf(oSame), 1);
+			oEntry = oSame;
+		}
+		_aRecent.push(oEntry);
+		if (_aRecent.length > MAX_RECENT) { _aRecent.shift(); }
 
-	function _postBatch(aBatch) {
-		return _sendBatch(aBatch).then(function (oResponse) {
-			// the approuter rejects a stale CSRF token with 403 (e.g. after its session was renewed) - fetch a fresh one and retry once
-			if (oResponse.status === 403 && _sCsrfToken) {
-				_sCsrfToken = null;
-				return _sendBatch(aBatch);
+		if (_mHandlers.onCapture) {
+			try {
+				_mHandlers.onCapture(oEntry);
+			} catch (oError) {
+				Log.warning("Error Capture Plugin: onCapture handler failed", oError);
 			}
-			return oResponse;
-		}).then(function (oResponse) {
-			if (!oResponse.ok) {
-				throw new Error("Error Log service responded with status " + oResponse.status);
-			}
-		});
-	}
-
-	function _flush() {
-		if (!_aQueue.length) { return; }
-		var aBatch = _aQueue.splice(0, _aQueue.length);
-		_persistQueue();
-		_postBatch(aBatch).catch(function (oError) {
-			Log.warning("Error Capture Plugin: failed to send captured messages, re-queueing", oError);
-			_aQueue = aBatch.concat(_aQueue).slice(-_oConfig.maxStoredOffline);
-			_persistQueue();
-		});
+		}
+		return oEntry;
 	}
 
 	// ---------------------------------------------------------------------
-	// sap.m.MessageBox - covers technical error dialogs, confirmation/
-	// validation popups raised by standard Fiori apps and custom apps alike.
-	// Takes the module as a parameter because an app running in an iframe
-	// has its own UI5 core and therefore its own MessageBox.
+	// sap.m.MessageBox - error/warning dialogs of standard Fiori apps and
+	// custom apps alike. alert/confirm/error/information/success/warning are
+	// all implemented by MessageBox.show, which builds the dialog and opens it
+	// synchronously - so only show is patched, and right after it returns the
+	// dialog is looked up by id and gets an "Ask AI" button. Takes the modules
+	// as parameters because an app in an iframe has its own UI5 core.
 	// ---------------------------------------------------------------------
 
-	function _messageBoxSeverity(oMessageBox, sMethod, mOptions) {
-		switch (sMethod) {
-			case "error": return "Error";
-			case "warning": return "Warning";
-			case "success": return "Success";
-			case "information": return "Information";
-			case "confirm": return "Warning";
-			case "alert": return "Information";
-			default: // .show(vMessage, mOptions)
-				if (mOptions.icon === oMessageBox.Icon.ERROR) { return "Error"; }
-				if (mOptions.icon === oMessageBox.Icon.WARNING) { return "Warning"; }
-				if (mOptions.icon === oMessageBox.Icon.SUCCESS) { return "Success"; }
-				return "Information";
+	function _messageBoxSeverity(oMessageBox, mOptions) {
+		switch (mOptions.icon) {
+			case oMessageBox.Icon.ERROR: return "Error";
+			case oMessageBox.Icon.WARNING: return "Warning";
+			case oMessageBox.Icon.SUCCESS: return "Success";
+			default: return "Information"; // INFORMATION, QUESTION (confirm), NONE
 		}
 	}
 
-	function _wrapMessageBox(oMessageBox) {
-		["show", "alert", "confirm", "error", "information", "success", "warning"].forEach(function (sMethod) {
-			var fnOriginal = oMessageBox[sMethod];
-			if (typeof fnOriginal !== "function" || fnOriginal.__errorCapturePatched) { return; }
-
-			var fnWrapped = function () {
-				// error()/warning()/alert()/... are implemented by calling MessageBox.show(), which is patched
-				// too - only the outermost call is captured, or every dialog would be recorded twice
-				if (_iMessageBoxDepth === 0) {
-					try {
-						var vMessage = arguments[0];
-						var mOptions = arguments[1] || {};
-						var sSeverity = _messageBoxSeverity(oMessageBox, sMethod, mOptions);
-						if (_isCapturedSeverity(sSeverity)) {
-							_capture({
-								severity: sSeverity,
-								message: typeof vMessage === "string" ? vMessage : String(vMessage),
-								description: mOptions.details ? _stringifyDetails(mOptions.details) : undefined,
-								messageCode: mOptions.messageCode,
-								source: "MessageBox"
-							});
-						}
-					} catch (oError) {
-						Log.warning("Error Capture Plugin: failed to intercept MessageBox." + sMethod, oError);
-					}
-				}
-				_iMessageBoxDepth++;
-				try {
-					return fnOriginal.apply(oMessageBox, arguments);
-				} finally {
-					_iMessageBoxDepth--;
-				}
-			};
-			fnWrapped.__errorCapturePatched = true;
-			oMessageBox[sMethod] = fnWrapped;
-		});
+	function _messageBoxText(vMessage) {
+		if (typeof vMessage === "string") { return vMessage; }
+		// show() also accepts a control (e.g. a FormattedText) as the message
+		if (vMessage && typeof vMessage.getText === "function") { return vMessage.getText(); }
+		if (vMessage && typeof vMessage.getHtmlText === "function") { return vMessage.getHtmlText().replace(/<[^>]*>/g, " "); }
+		return String(vMessage);
 	}
 
-	// ---------------------------------------------------------------------
-	// sap.m.MessageToast - transient screen messages
-	// ---------------------------------------------------------------------
+	// Element.getElementById exists from UI5 1.119; an app in an iframe may run an older UI5 of its own
+	function _getElementById(ElementClass, sId) {
+		if (typeof ElementClass.getElementById === "function") { return ElementClass.getElementById(sId); }
+		return ElementClass.registry && ElementClass.registry.get(sId);
+	}
 
-	function _wrapMessageToast(oMessageToast) {
-		var fnOriginal = oMessageToast.show;
+	function _addAskAiButton(oDialog, oEntry, ButtonClass) {
+		if (!oDialog || typeof oDialog.insertButton !== "function") { return; }
+		// without an initial focus the dialog focuses its first button, which would now be Ask AI - keep the focus
+		// (and so Enter/Escape habits) on the app's own first action
+		var aButtons = oDialog.getButtons();
+		if (!oDialog.getInitialFocus() && aButtons.length) {
+			oDialog.setInitialFocus(aButtons[0]);
+		}
+		oDialog.insertButton(new ButtonClass({
+			text: _oConfig.texts.askAiButton,
+			tooltip: _oConfig.texts.askAiButtonTooltip,
+			icon: _oConfig.askAiIcon,
+			// a real click on the dialog, so the browser lets the new tab open; the dialog stays open and the app's
+			// own onClose is not involved
+			press: function () { _mHandlers.onAskAi(oEntry); }
+		}), 0);
+	}
+
+	function _wrapMessageBox(oMessageBox, ButtonClass, ElementClass) {
+		var fnOriginal = oMessageBox.show;
 		if (typeof fnOriginal !== "function" || fnOriginal.__errorCapturePatched) { return; }
 
-		var fnWrapped = function (sMessage) {
+		var fnWrapped = function (vMessage, mOptions) {
+			var oEntry = null;
+			var mArgs = arguments;
 			try {
-				if (_oConfig.captureMessageToast && _isCapturedSeverity("Information")) {
-					_capture({ severity: "Information", message: sMessage, source: "MessageToast" });
+				var sSeverity = _messageBoxSeverity(oMessageBox, mOptions || {});
+				if (_isCapturedSeverity(sSeverity)) {
+					oEntry = _capture({
+						severity: sSeverity,
+						message: _messageBoxText(vMessage),
+						messageCode: mOptions && mOptions.messageCode, // not a MessageBox option, but some apps pass it
+						source: "MessageBox"
+					});
+				}
+				if (oEntry) {
+					// the user saw this one in a dialog (merged entries included) - no extra notification needed
+					oEntry.shownInDialog = true;
+				}
+				if (oEntry && _oConfig.addAskAiButtonToMessageBox && !(mOptions && mOptions.id)) {
+					// show() generates the dialog id itself when none is given - give it one we can look up
+					mArgs = [vMessage, Object.assign({}, mOptions, { id: "errorCaptureMessageBox" + (++_iMessageBoxCount) })];
 				}
 			} catch (oError) {
-				Log.warning("Error Capture Plugin: failed to intercept MessageToast.show", oError);
+				Log.warning("Error Capture Plugin: failed to intercept MessageBox.show", oError);
 			}
-			return fnOriginal.apply(oMessageToast, arguments);
+
+			var vResult = fnOriginal.apply(oMessageBox, mArgs);
+
+			if (oEntry && _oConfig.addAskAiButtonToMessageBox) {
+				try {
+					_addAskAiButton(_getElementById(ElementClass, mArgs[1].id), oEntry, ButtonClass);
+				} catch (oError) {
+					Log.warning("Error Capture Plugin: could not add the Ask AI button to a MessageBox", oError);
+				}
+			}
+			return vResult;
 		};
 		fnWrapped.__errorCapturePatched = true;
-		oMessageToast.show = fnWrapped;
+		oMessageBox.show = fnWrapped;
+		_aCleanup.push(function () {
+			if (oMessageBox.show === fnWrapped) { oMessageBox.show = fnOriginal; }
+		});
 	}
 
 	// ---------------------------------------------------------------------
-	// sap.ui.core Message Model - covers inline/validation messages and the
-	// message popover shown by list reports / object pages (incl. OData
-	// backend error responses surfaced through Fiori Elements), for both
-	// standard and custom-built apps.
+	// sap.ui.core Message Model - inline/validation messages and the message
+	// popover/dialog of Fiori Elements list reports & object pages (incl.
+	// OData backend errors, which carry the SAP message code).
 	// ---------------------------------------------------------------------
 
 	function _listenToMessageModel(oWin) {
@@ -338,7 +295,6 @@ sap.ui.define([
 					_capture({
 						severity: sSeverity,
 						message: oMessage.getMessage ? oMessage.getMessage() : oMessage.message,
-						description: oMessage.getDescription ? oMessage.getDescription() : oMessage.description,
 						messageCode: oMessage.getCode ? oMessage.getCode() : oMessage.code,
 						source: "MessageManager"
 					});
@@ -355,21 +311,16 @@ sap.ui.define([
 	// ---------------------------------------------------------------------
 
 	function _onWindowError(oEvent) {
-		_capture({
-			severity: "Error",
-			message: oEvent.message || "Uncaught JavaScript error",
-			stack: oEvent.error && oEvent.error.stack,
-			source: "JSError",
-			additionalInfo: JSON.stringify({ filename: oEvent.filename, lineno: oEvent.lineno, colno: oEvent.colno })
-		});
+		if (!_isCapturedSeverity("Error")) { return; }
+		_capture({ severity: "Error", message: oEvent.message || "Uncaught JavaScript error", source: "JSError" });
 	}
 
 	function _onUnhandledRejection(oEvent) {
+		if (!_isCapturedSeverity("Error")) { return; }
 		var vReason = oEvent.reason;
 		_capture({
 			severity: "Error",
 			message: (vReason && (vReason.message || String(vReason))) || "Unhandled promise rejection",
-			stack: vReason && vReason.stack,
 			source: "UnhandledRejection"
 		});
 	}
@@ -385,13 +336,13 @@ sap.ui.define([
 
 	// ---------------------------------------------------------------------
 	// Failed service calls (fetch + XMLHttpRequest) - catches backend errors
-	// even when the app handles them quietly and never shows a message.
+	// even when the app handles them quietly and never shows a message, and
+	// supplies the SAP message code for the dialog that does show one.
 	// OData $batch responses are 200 even when an operation inside failed,
 	// so their bodies are scanned for the individual failed operations.
 	// ---------------------------------------------------------------------
 
 	function _shouldTrackRequest(sAbsoluteUrl) {
-		if (sAbsoluteUrl.indexOf(_sBackendAbsoluteUrl) === 0) { return false; } // never report our own logging calls
 		return !_aHttpIgnorePatterns.some(function (oPattern) {
 			return oPattern.test(sAbsoluteUrl);
 		});
@@ -436,7 +387,7 @@ sap.ui.define([
 			try {
 				(JSON.parse(sBody).responses || []).forEach(function (oPart) {
 					if (oPart.status >= 400 && aFailures.length < MAX_BATCH_FAILURES) {
-						aFailures.push({ status: oPart.status, body: _stringifyDetails(oPart.body) });
+						aFailures.push({ status: oPart.status, body: JSON.stringify(oPart.body) });
 					}
 				});
 			} catch (e) { /* not JSON after all - nothing to report */ }
@@ -469,22 +420,13 @@ sap.ui.define([
 		var sStatus = mRequest.status
 			? "HTTP " + mRequest.status + (mRequest.statusText ? " " + mRequest.statusText : "")
 			: "Network error" + (mRequest.statusText ? ": " + mRequest.statusText : "");
-		var sRequest = mRequest.method + " " + mRequest.url + (mRequest.batch ? " (operation inside $batch)" : "");
-		var sBody = mRequest.body ? String(mRequest.body).slice(0, _oConfig.httpErrorMaxBodyLength) : "";
 
 		_capture({
 			severity: "Error",
-			message: oServiceError.message || (sStatus + " - " + sRequest),
-			description: sStatus + " - " + sRequest + (sBody ? "\n\n" + sBody : ""),
+			message: oServiceError.message
+				|| (sStatus + " - " + mRequest.method + " " + mRequest.url + (mRequest.batch ? " (operation inside $batch)" : "")),
 			messageCode: oServiceError.code ? String(oServiceError.code) : "HTTP_" + (mRequest.status || "NETWORK"),
-			source: "HttpError",
-			additionalInfo: JSON.stringify({
-				method: mRequest.method,
-				requestUrl: mRequest.url,
-				status: mRequest.status,
-				durationMs: mRequest.durationMs,
-				batchOperation: !!mRequest.batch
-			})
+			source: "HttpError"
 		});
 	}
 
@@ -493,10 +435,10 @@ sap.ui.define([
 		var bBatch = _isBatchRequest(mRequest.url);
 		if (iStatus < 400 && !bBatch) { return; }
 
-		var mFailure = Object.assign({ status: iStatus, statusText: sStatusText, durationMs: Date.now() - mRequest.start }, mRequest);
+		var mFailure = Object.assign({ status: iStatus, statusText: sStatusText }, mRequest);
 		Promise.resolve().then(fnReadBody).then(function (sBody) {
 			if (iStatus >= 400) {
-				_captureHttpFailure(Object.assign(mFailure, { status: iStatus, statusText: sStatusText, body: sBody }));
+				_captureHttpFailure(Object.assign(mFailure, { body: sBody }));
 				return;
 			}
 			_findBatchFailures(sBody).forEach(function (oFailure) {
@@ -504,7 +446,7 @@ sap.ui.define([
 			});
 		}).catch(function () {
 			if (iStatus >= 400) {
-				_captureHttpFailure(Object.assign(mFailure, { status: iStatus, statusText: sStatusText }));
+				_captureHttpFailure(mFailure);
 			}
 		});
 	}
@@ -519,7 +461,7 @@ sap.ui.define([
 				var sUrl = _toAbsoluteUrl(typeof vInput === "string" ? vInput : (vInput && vInput.url) || String(vInput), oWin);
 				var sMethod = (mInit && mInit.method) || (vInput && typeof vInput === "object" && vInput.method) || "GET";
 				if (_shouldTrackRequest(sUrl)) {
-					mRequest = { method: String(sMethod).toUpperCase(), url: sUrl, start: Date.now() };
+					mRequest = { method: String(sMethod).toUpperCase(), url: sUrl };
 				}
 			} catch (e) { /* never let tracking break the app's request */ }
 
@@ -538,7 +480,7 @@ sap.ui.define([
 			}, function (oError) {
 				try {
 					if (!_bUnloading && !(oError && oError.name === "AbortError")) {
-						_captureHttpFailure(Object.assign({ status: 0, statusText: oError && oError.message, durationMs: Date.now() - mRequest.start }, mRequest));
+						_captureHttpFailure(Object.assign({ status: 0, statusText: oError && oError.message }, mRequest));
 					}
 				} catch (e) { /* ignore */ }
 				throw oError;
@@ -573,14 +515,13 @@ sap.ui.define([
 			if (mRequest) {
 				try {
 					var bAborted = false;
-					mRequest.start = Date.now();
 					oXhr.addEventListener("abort", function () { bAborted = true; });
 					oXhr.addEventListener("loadend", function () {
 						try {
 							if (bAborted) { return; }
 							if (oXhr.status === 0) {
 								if (!_bUnloading) {
-									_captureHttpFailure(Object.assign({ status: 0, statusText: "request failed or was blocked", durationMs: Date.now() - mRequest.start }, mRequest));
+									_captureHttpFailure(Object.assign({ status: 0, statusText: "request failed or was blocked" }, mRequest));
 								}
 								return;
 							}
@@ -625,9 +566,9 @@ sap.ui.define([
 		return true;
 	}
 
-	// UI5 in an iframe boots asynchronously - wait for it, then patch that frame's own MessageBox/MessageToast
-	// and message model. Requiring the modules as soon as the loader exists means our callback is registered
-	// before the app's own require for them, so the patch is in place before the app's first message.
+	// UI5 in an iframe boots asynchronously - wait for it, then patch that frame's own MessageBox and message
+	// model. Requiring the modules as soon as the loader exists means our callback is registered before the
+	// app's own require for them, so the patch is in place before the app's first message.
 	function _instrumentFrameUi5(oWin, iAttempt) {
 		var bUi5Ready;
 		try {
@@ -641,9 +582,8 @@ sap.ui.define([
 			}
 			return;
 		}
-		oWin.sap.ui.require(["sap/m/MessageBox", "sap/m/MessageToast"], function (oFrameMessageBox, oFrameMessageToast) {
-			_wrapMessageBox(oFrameMessageBox);
-			_wrapMessageToast(oFrameMessageToast);
+		oWin.sap.ui.require(["sap/m/MessageBox", "sap/m/Button", "sap/ui/core/Element"], function (oFrameMessageBox, FrameButton, FrameElement) {
+			_wrapMessageBox(oFrameMessageBox, FrameButton, FrameElement);
 		});
 		try {
 			oWin.sap.ui.getCore().attachInit(function () { _listenToMessageModel(oWin); });
@@ -698,7 +638,6 @@ sap.ui.define([
 
 	function _onPageHide() {
 		_bUnloading = true; // requests the browser cancels while leaving the page are not real service errors
-		_flush();
 	}
 
 	// ---------------------------------------------------------------------
@@ -707,40 +646,36 @@ sap.ui.define([
 
 	return {
 
-		init: function (mConfig) {
+		/**
+		 * @param {object} mConfig sap.ui5/config/errorCapture from the plugin's manifest.json, plus <code>texts</code>
+		 * @param {object} mHandlers
+		 * @param {function(object)} mHandlers.onAskAi called with a captured entry when its Ask AI button is pressed
+		 * @param {function(object)} [mHandlers.onCapture] called with the entry whenever an error is captured
+		 * @param {function()} [mHandlers.onClear] called when another app is opened and earlier errors are dropped
+		 */
+		init: function (mConfig, mHandlers) {
 			if (_bInitialized) { return; }
 
 			_oConfig = Object.assign({
-				backendBaseUrl: "odata/v4/error-log",
 				capturedSeverities: ["Error", "Warning"],
-				captureMessageToast: true,
+				addAskAiButtonToMessageBox: true,
+				askAiIcon: "sap-icon://ai",
 				captureUnhandledJsErrors: true,
 				captureHttpErrors: true,
 				httpErrorIgnoreUrlPatterns: [],
-				httpErrorMaxBodyLength: 2000,
+				ignoreMessagePatterns: [],
 				captureSameOriginIframes: true,
 				duplicateWindowMs: 2000,
-				flushIntervalMs: 5000,
-				maxQueueLength: 200,
-				maxStoredOffline: 500,
-				standardAppNamespacePrefixes: ["sap.", "com.sap."]
+				texts: {}
 			}, mConfig || {});
-			_oConfig.backendBaseUrl = _resolveBackendBaseUrl(_oConfig.backendBaseUrl);
-			_sBackendAbsoluteUrl = _toAbsoluteUrl(_oConfig.backendBaseUrl, window);
-			_aHttpIgnorePatterns = (_oConfig.httpErrorIgnoreUrlPatterns || []).reduce(function (aPatterns, sPattern) {
-				try {
-					aPatterns.push(new RegExp(sPattern, "i"));
-				} catch (e) {
-					Log.warning("Error Capture Plugin: ignoring invalid httpErrorIgnoreUrlPatterns entry " + sPattern);
-				}
-				return aPatterns;
-			}, []);
+			_mHandlers = mHandlers || {};
+			_aHttpIgnorePatterns = _compileRegExps(_oConfig.httpErrorIgnoreUrlPatterns, "httpErrorIgnoreUrlPatterns");
+			_aMessageIgnorePatterns = _compileRegExps(_oConfig.ignoreMessagePatterns, "ignoreMessagePatterns");
 
-			_restoreQueue();
+			_sCurrentIntent = _parseIntent();
 			_refreshAppContext();
 
-			_wrapMessageBox(MessageBox);
-			_wrapMessageToast(MessageToast);
+			_wrapMessageBox(MessageBox, Button, Element);
 			_listenToMessageModel(window);
 			_instrumentWindow(window);
 			if (_oConfig.captureSameOriginIframes) {
@@ -748,32 +683,41 @@ sap.ui.define([
 			}
 
 			window.addEventListener("hashchange", _onHashChange);
-			_iFlushIntervalId = window.setInterval(_flush, _oConfig.flushIntervalMs);
 			window.addEventListener("pagehide", _onPageHide);
-			window.addEventListener("beforeunload", _flush);
 
 			_bInitialized = true;
 			Log.info("Error Capture Plugin: initialized", JSON.stringify(_oConfig));
 		},
 
-		// exposed for unit tests / manual flush (e.g. from an admin action)
-		flush: _flush,
+		/** @returns {object|undefined} the most recently captured error in the current app */
+		getLatest: function () {
+			return _aRecent[_aRecent.length - 1];
+		},
+
+		/** @returns {object[]} the errors captured in the current app, newest first */
+		getAll: function () {
+			return _aRecent.slice().reverse();
+		},
+
+		/** Forgets the errors captured in the current app, e.g. when the user clears the list. */
+		clear: function () {
+			_aRecent = [];
+			if (_mHandlers.onClear) { _mHandlers.onClear(); }
+		},
 
 		destroy: function () {
 			if (!_bInitialized) { return; }
-			window.clearInterval(_iFlushIntervalId);
 			window.clearTimeout(_iHashChangeTimeoutId);
 			window.removeEventListener("hashchange", _onHashChange);
 			window.removeEventListener("pagehide", _onPageHide);
-			window.removeEventListener("beforeunload", _flush);
 			_aCleanup.forEach(function (fnCleanup) {
 				try {
 					fnCleanup();
 				} catch (e) { /* the window it belonged to may already be gone */ }
 			});
 			_aCleanup = [];
+			_aRecent = [];
 			_oInstrumentedWindows = new WeakSet();
-			_flush();
 			_bInitialized = false;
 		}
 	};

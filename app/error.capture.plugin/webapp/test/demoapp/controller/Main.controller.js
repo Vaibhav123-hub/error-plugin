@@ -1,20 +1,19 @@
 sap.ui.define([
 	"sap/ui/core/mvc/Controller",
 	"sap/m/MessageBox",
-	"sap/m/MessageToast",
 	"sap/ui/core/message/Message",
 	"sap/ui/core/library"
-], function (Controller, MessageBox, MessageToast, Message, coreLibrary) {
+], function (Controller, MessageBox, Message, coreLibrary) {
 	"use strict";
 
 	var MessageType = coreLibrary.MessageType;
 
 	return Controller.extend("error.capture.plugin.test.demoapp.controller.Main", {
 
+		// error dialog with a SAP message code - Ask AI receives message_id M3 / message_number 305
 		onTriggerMessageBoxError: function () {
-			MessageBox.error("Item 4711 could not be saved: backend returned HTTP 500.", {
-				details: "Technical details: /sap/opu/odata/sap/DEMO_SRV/Items(4711) - Internal Server Error",
-				messageCode: "DEMO/SAVE_FAILED"
+			MessageBox.error("Material 4711 does not exist", {
+				messageCode: "M3/305"
 			});
 		},
 
@@ -22,19 +21,27 @@ sap.ui.define([
 			MessageBox.warning("Some line items have quantities exceeding available stock.");
 		},
 
-		onTriggerMessageToast: function () {
-			MessageToast.show("Draft saved locally.");
+		// confirmation dialogs are questions, not errors - no Ask AI button expected
+		onTriggerMessageBoxConfirm: function () {
+			MessageBox.confirm("Do you want to discard your changes?");
 		},
 
+		// no dialog: only the launchpad header's Ask AI button offers it
 		onTriggerMessageManager: function () {
 			sap.ui.getCore().getMessageManager().addMessages(
 				new Message({
-					message: "Quantity must be greater than zero",
+					message: "Enter a quantity greater than zero",
+					code: "V1/023",
 					type: MessageType.Error,
 					target: "/DemoModel/quantity",
 					processor: new sap.ui.model.json.JSONModel({ quantity: 0 })
 				})
 			);
+		},
+
+		// failed service call the app handles quietly - header button only
+		onTriggerFailedCall: function () {
+			fetch("./odata/DemoService/Orders(4711)").catch(function () { /* handled by the "app" */ });
 		},
 
 		onTriggerJsError: function () {

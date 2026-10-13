@@ -5,7 +5,7 @@
     "type": "component",
     "i18n": "i18n/i18n.properties",
     "applicationVersion": {
-      "version": "1.0.4"
+      "version": "2.1.0"
     },
     "title": "{{appTitle}}",
     "description": "{{appDescription}}",
@@ -39,10 +39,18 @@
     "config": {
       "fullWidth": true,
       "errorCapture": {
-        "_comment": "Runtime config for util/MessageInterceptor.js - adjust per landscape without touching code.",
-        "backendBaseUrl": "odata/v4/error-log",
-        "capturedSeverities": [ "Error", "Warning" ],
-        "captureMessageToast": true,
+        "_comment": "Runtime config for util/MessageInterceptor.js, util/AskAI.js, util/AskAIHeaderItem.js and util/ErrorListDialog.js - adjust per landscape without touching code.",
+        "askAiUrl": "http://a9a4c03ecce524310a13b3d4c50751cd-240f53dcd8190c23.elb.us-east-1.amazonaws.com/",
+        "askAiIncludeUser": true,
+        "askAiMaxMessageLength": 1000,
+        "askAiIcon": "sap-icon://ai",
+        "addAskAiButtonToMessageBox": true,
+        "showAskAiHeaderButton": true,
+        "notifyErrorsWithoutDialog": true,
+        "capturedSeverities": [
+          "Error",
+          "Warning"
+        ],
         "captureUnhandledJsErrors": true,
         "captureHttpErrors": true,
         "httpErrorIgnoreUrlPatterns": [
@@ -50,15 +58,16 @@
           "/resources/",
           "/test-resources/",
           "sessionKeepAlive",
+          "/sap/es/ina/",
+          "/ESH_SEARCH_SRV/",
           "/logout"
         ],
-        "httpErrorMaxBodyLength": 2000,
+        "ignoreMessagePatterns": [
+          "^Script error\\.?$",
+          "ResizeObserver loop"
+        ],
         "captureSameOriginIframes": true,
-        "duplicateWindowMs": 2000,
-        "flushIntervalMs": 5000,
-        "maxQueueLength": 200,
-        "maxStoredOffline": 500,
-        "standardAppNamespacePrefixes": [ "sap.", "com.sap." ]
+        "duplicateWindowMs": 2000
       }
     },
     "dependencies": {
