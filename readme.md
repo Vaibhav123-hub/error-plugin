@@ -35,12 +35,20 @@ Parameter | Value
 `message_id` | SAP message class, e.g. `M3` — from a message code of the form `<class>/<number>` (OData V2 Gateway and RAP error codes), empty otherwise
 `message_number` | SAP message number, e.g. `305`
 `transaction_code` | UI5 apps have no t-code: the app id (`sap.app/id`, or the semantic object-action if it can't be resolved)
-`message_text` | the message the user saw (cut to `askAiMaxMessageLength`)
+`message_text` | the message the user saw (cut to `askAiMaxMessageLength`). For a failed backend call, the backend's own message (see below)
 `user_name` / `user_full_name` | logged-in launchpad user (`UserInfo` service); empty when `askAiIncludeUser` is `false`
 
 One interaction often surfaces through several channels — a failed OData call carrying the SAP message code, and
 the dialog showing its text without the code. Captures with the same text within `duplicateWindowMs` are merged,
 so Ask AI from the dialog still gets `message_id`/`message_number`.
+
+**Failed backend calls** (`util/ServiceError.js`) use the backend's own message from the error response: OData V2
+(SAP Gateway, JSON or XML), OData V4 (RAP, CAP) or plain JSON. When the top-level message is only a wrapper
+("An exception was raised.", "Multiple errors occurred…", a bare "Not Found"), the first specific error from the
+details (`innererror.errordetails` / `details`) is used instead, with its message class/number. Without any usable
+message (HTML error pages, empty bodies, network failures) the text describes the status in plain language plus
+what was called, without keys or query options, which can carry business data — e.g. *"The requested data or
+service was not found. (HTTP 404, GET ZSD_SRV/Orders)"*. The status texts are in `i18n.properties` (`httpError*`).
 
 ## Project layout
 
@@ -48,6 +56,7 @@ File or Folder | Purpose
 ---|---
 `app/error.capture.plugin/webapp/util/MessageInterceptor.js` | captures messages (MessageBox, message model, JS errors, failed fetch/XHR calls incl. `$batch` operations, same-origin iframe apps) and adds the Ask AI button to MessageBox dialogs
 `app/error.capture.plugin/webapp/util/AskAI.js` | builds the Ask AI URL from a captured message and opens it
+`app/error.capture.plugin/webapp/util/ServiceError.js` | the user-facing message of a failed backend call: the backend's message from the error body, or a plain-language description of the status
 `app/error.capture.plugin/webapp/util/AskAIHeaderItem.js` | the Ask AI button with the error badge in the launchpad header (`Extension` service)
 `app/error.capture.plugin/webapp/util/ErrorListDialog.js` | the "Errors in This App" list the header button opens
 `app/error.capture.plugin/webapp/manifest.json` | all configuration, under `sap.ui5/config/errorCapture`

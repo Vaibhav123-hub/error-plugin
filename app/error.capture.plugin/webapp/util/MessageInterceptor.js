@@ -2,8 +2,9 @@ sap.ui.define([
 	"sap/m/MessageBox",
 	"sap/m/Button",
 	"sap/ui/core/Element",
-	"sap/base/Log"
-], function (MessageBox, Button, Element, Log) {
+	"sap/base/Log",
+	"error/capture/plugin/util/ServiceError"
+], function (MessageBox, Button, Element, Log, ServiceError) {
 	"use strict";
 
 	var UI5_WAIT_INTERVAL_MS = 250;
@@ -352,32 +353,6 @@ sap.ui.define([
 		return /\/\$batch(\?|$)/.test(sAbsoluteUrl);
 	}
 
-	// Pulls the human-readable message and code out of an OData V2/V4 (JSON or XML) or generic JSON error body.
-	function _extractServiceError(sBody) {
-		if (!sBody) { return {}; }
-		try {
-			var oJson = JSON.parse(sBody);
-			var oError = oJson && (oJson.error || oJson["odata.error"]);
-			if (oError) {
-				var vMessage = oError.message;
-				return {
-					message: vMessage && typeof vMessage === "object" ? vMessage.value : vMessage,
-					code: oError.code
-				};
-			}
-			if (oJson && typeof oJson.message === "string") {
-				return { message: oJson.message, code: oJson.code };
-			}
-		} catch (e) {
-			var oMessage = /<message[^>]*>([^<]*)<\/message>/i.exec(sBody);
-			var oCode = /<code>([^<]*)<\/code>/i.exec(sBody);
-			if (oMessage) {
-				return { message: oMessage[1], code: oCode && oCode[1] };
-			}
-		}
-		return {};
-	}
-
 	// Returns one entry per failed operation inside a $batch response body (multipart or JSON format).
 	function _findBatchFailures(sBody) {
 		var aFailures = [];
@@ -416,15 +391,13 @@ sap.ui.define([
 
 	function _captureHttpFailure(mRequest) {
 		if (!_isCapturedSeverity("Error")) { return; }
-		var oServiceError = _extractServiceError(mRequest.body);
-		var sStatus = mRequest.status
-			? "HTTP " + mRequest.status + (mRequest.statusText ? " " + mRequest.statusText : "")
-			: "Network error" + (mRequest.statusText ? ": " + mRequest.statusText : "");
+		// the backend's own message is what the app shows too (so a dialog showing it merges with this entry); without
+		// one, a plain-language description of the status - never the raw URL, whose keys can carry business data
+		var oServiceError = ServiceError.extract(mRequest.body);
 
 		_capture({
 			severity: "Error",
-			message: oServiceError.message
-				|| (sStatus + " - " + mRequest.method + " " + mRequest.url + (mRequest.batch ? " (operation inside $batch)" : "")),
+			message: oServiceError.message || ServiceError.describe(mRequest, _oConfig.texts),
 			messageCode: oServiceError.code ? String(oServiceError.code) : "HTTP_" + (mRequest.status || "NETWORK"),
 			source: "HttpError"
 		});

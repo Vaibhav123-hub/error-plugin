@@ -4,8 +4,9 @@ sap.ui.define([
 	"error/capture/plugin/util/MessageInterceptor",
 	"error/capture/plugin/util/AskAI",
 	"error/capture/plugin/util/AskAIHeaderItem",
-	"error/capture/plugin/util/ErrorListDialog"
-], function (UIComponent, MessageToast, MessageInterceptor, AskAI, AskAIHeaderItem, ErrorListDialog) {
+	"error/capture/plugin/util/ErrorListDialog",
+	"error/capture/plugin/util/ServiceError"
+], function (UIComponent, MessageToast, MessageInterceptor, AskAI, AskAIHeaderItem, ErrorListDialog, ServiceError) {
 	"use strict";
 
 	return UIComponent.extend("error.capture.plugin.Component", {
@@ -23,7 +24,8 @@ sap.ui.define([
 			var mTexts = {};
 			["askAiButton", "askAiButtonTooltip", "askAiHeaderText", "askAiHeaderTooltipOne", "askAiHeaderTooltipMany",
 				"errorListTitle", "errorListIntro", "errorListEmpty", "errorListClear", "errorListClose", "errorSourceDialog",
-				"errorSourceMessages", "errorSourceHttp", "errorSourceScript", "errorOccurrences", "errorNotification"].forEach(function (sKey) {
+				"errorSourceMessages", "errorSourceHttp", "errorSourceScript", "errorOccurrences", "errorNotification"]
+				.concat(ServiceError.TEXT_KEYS).forEach(function (sKey) {
 				mTexts[sKey] = oBundle.getText(sKey);
 			});
 			this._mConfig = mConfig;
