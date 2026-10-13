@@ -34,7 +34,7 @@ Parameter | Value
 ---|---
 `message_id` | SAP message class, e.g. `M3` — from a message code of the form `<class>/<number>` (OData V2 Gateway and RAP error codes), empty otherwise
 `message_number` | SAP message number, e.g. `305`
-`transaction_code` | UI5 apps have no t-code: the app id (`sap.app/id`, or the semantic object-action if it can't be resolved)
+`transaction_code` | UI5 apps have no t-code: the app id. The semantic object-action from the URL (e.g. `SalesOrder-manage`, `Shell-home`) from the moment the user navigates, so errors raised while an app is still loading belong to it; replaced by its `sap.app/id` once the launchpad reports the app as loaded (`AppLifeCycle` `appLoaded`)
 `message_text` | the message the user saw (cut to `askAiMaxMessageLength`). For a failed backend call, the backend's own message (see below)
 `user_name` / `user_full_name` | logged-in launchpad user (`UserInfo` service); empty when `askAiIncludeUser` is `false`
 

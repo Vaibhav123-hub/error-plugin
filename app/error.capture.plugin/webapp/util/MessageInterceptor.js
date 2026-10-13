@@ -23,7 +23,6 @@ sap.ui.define([
 	var _sCurrentIntent;
 	var _aCleanup = [];
 	var _oInstrumentedWindows = new WeakSet();
-	var _iHashChangeTimeoutId = null;
 	var _iMessageBoxCount = 0;
 
 	function _isCapturedSeverity(sSeverity) {
@@ -74,39 +73,47 @@ sap.ui.define([
 		}
 	}
 
-	function _refreshAppContext() {
-		_oAppContext = { appId: _parseIntent(), appTitle: document.title };
+	// The intent in the URL hash ("SalesOrder-manage") is known the moment the user navigates, so every error from
+	// then on - including ones raised while the new app is still loading - belongs to the new app straight away.
+	// Once the launchpad reports the app as loaded, its sap.app/id refines it.
+	function _setContextFromIntent() {
+		_oAppContext = { appId: _parseIntent() };
+	}
 
+	function _applyLoadedApp(oApp) {
+		var oComponent = oApp && !oApp.homePage && oApp.componentInstance;
+		if (!oComponent || typeof oComponent.getManifestEntry !== "function") { return; } // home, or a non-UI5 app
+		var oAppManifest = oComponent.getManifestEntry("sap.app") || {};
+		if (oAppManifest.id) { _oAppContext.appId = oAppManifest.id; }
+		if (oAppManifest.title && oAppManifest.title.indexOf("{{") !== 0) { _oAppContext.appTitle = oAppManifest.title; }
+	}
+
+	function _onAppLoaded(oEvent) {
+		_applyLoadedApp(oEvent.getParameters());
+	}
+
+	function _watchLoadedApps() {
 		if (!(window.sap && sap.ushell && sap.ushell.Container && sap.ushell.Container.getServiceAsync)) {
 			return;
 		}
-		var oContext = _oAppContext;
 		sap.ushell.Container.getServiceAsync("AppLifeCycle").then(function (oAppLifeCycle) {
-			var oCurrentApp = oAppLifeCycle.getCurrentApplication && oAppLifeCycle.getCurrentApplication();
-			var oComponent = oCurrentApp && oCurrentApp.componentInstance;
-			if (!oComponent || !oComponent.getManifestEntry) { return; }
-			var oAppManifest = oComponent.getManifestEntry("sap.app") || {};
-			oContext.appId = oAppManifest.id || oContext.appId;
-			if (oAppManifest.title && oAppManifest.title.indexOf("{{") !== 0) {
-				oContext.appTitle = oAppManifest.title;
-			}
+			if (!_bInitialized) { return; }
+			_applyLoadedApp(oAppLifeCycle.getCurrentApplication()); // the app already open when the plugin started
+			oAppLifeCycle.attachAppLoaded(_onAppLoaded);
+			_aCleanup.push(function () { oAppLifeCycle.detachAppLoaded(_onAppLoaded); });
 		}).catch(function (oError) {
-			Log.warning("Error Capture Plugin: could not resolve current app context", oError);
+			Log.warning("Error Capture Plugin: could not resolve the current app", oError);
 		});
 	}
 
 	function _onHashChange() {
 		var sIntent = _parseIntent();
-		if (sIntent !== _sCurrentIntent) {
-			// another app (or home) is now open: errors captured in the previous one are no longer relevant.
-			// In-app navigation (same intent, different inner route) keeps them.
-			_sCurrentIntent = sIntent;
-			_aRecent = [];
-			if (_mHandlers.onClear) { _mHandlers.onClear(); }
-		}
-		window.clearTimeout(_iHashChangeTimeoutId);
-		// small delay so the new app component/manifest is available once its Component has loaded
-		_iHashChangeTimeoutId = window.setTimeout(_refreshAppContext, 400);
+		if (sIntent === _sCurrentIntent) { return; } // in-app navigation (same intent, different inner route)
+		// another app (or home) is now open: errors captured in the previous one are no longer relevant
+		_sCurrentIntent = sIntent;
+		_setContextFromIntent();
+		_aRecent = [];
+		if (_mHandlers.onClear) { _mHandlers.onClear(); }
 	}
 
 	// ---------------------------------------------------------------------
@@ -646,7 +653,7 @@ sap.ui.define([
 			_aMessageIgnorePatterns = _compileRegExps(_oConfig.ignoreMessagePatterns, "ignoreMessagePatterns");
 
 			_sCurrentIntent = _parseIntent();
-			_refreshAppContext();
+			_setContextFromIntent();
 
 			_wrapMessageBox(MessageBox, Button, Element);
 			_listenToMessageModel(window);
@@ -659,6 +666,7 @@ sap.ui.define([
 			window.addEventListener("pagehide", _onPageHide);
 
 			_bInitialized = true;
+			_watchLoadedApps();
 			Log.info("Error Capture Plugin: initialized", JSON.stringify(_oConfig));
 		},
 
@@ -680,7 +688,6 @@ sap.ui.define([
 
 		destroy: function () {
 			if (!_bInitialized) { return; }
-			window.clearTimeout(_iHashChangeTimeoutId);
 			window.removeEventListener("hashchange", _onHashChange);
 			window.removeEventListener("pagehide", _onPageHide);
 			_aCleanup.forEach(function (fnCleanup) {
