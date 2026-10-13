@@ -1,86 +1,77 @@
 # Error Capture Plugin
 
-An SAP Fiori Launchpad (FLP) plugin that captures message popups and screen
-messages (`sap.m.MessageBox`, `sap.m.MessageToast`, the UI5 message
-model/popover, and uncaught JS errors) raised by **any UI5 app** running on
-the launchpad — standard SAP Fiori apps and custom-built UI5 apps alike —
-and persists them through a CAP service backed by SAP HANA. Transaction
-tiles that launch SAP GUI for HTML (WebGUI) or Web Dynpro ABAP aren't UI5
-apps, so the plugin can't see into them; those are covered separately by
-ABAP calling the same CAP service directly — see
-[`abap/README.md`](abap/README.md).
+An SAP Fiori Launchpad (FLP) plugin that captures the error and warning messages users see in **any UI5 app**
+on the launchpad — standard SAP Fiori apps and custom-built UI5 apps alike — and lets the user **ask AI about
+them**: the captured message's essential details are sent to the Ask AI service, which opens in a new tab.
+
+Nothing is stored. There is no backend of its own: the plugin is a single HTML5 app.
+
+## How the user gets to Ask AI
+
+- **Error/warning dialogs** (`sap.m.MessageBox`) get an **Ask AI** button next to their own buttons. It opens
+  Ask AI for exactly that message and leaves the dialog open; the dialog's own buttons, keyboard focus and
+  `onClose` callback are unchanged. Confirmation dialogs (`MessageBox.confirm`) are questions, not errors, and
+  don't get the button.
+- **Launchpad header**: as soon as an error is captured in the open app, an **Ask AI** button appears in the
+  shell header with a red badge counting the app's errors (one per distinct message; a repeat raises its
+  "N times", not the badge). Pressing it opens **Errors in This App**: every error, newest first, with where it came
+  from (dialog, the app's messages, failed backend call, script error), when, and its own **Ask AI** button. This
+  covers errors shown without a `MessageBox` — Fiori Elements message dialogs/popovers, field validation, failed
+  service calls the app handles quietly. **Clear List** empties it and hides the button; opening another app does
+  the same (in-app navigation keeps it). On narrow screens the shell may move the button into its "•••" menu.
+- **Notification**: when an error occurs that the user didn't see in a `MessageBox` (whose own Ask AI button
+  already covers it), a toast says *"An error occurred in this app. Select Ask AI at the top right to get help
+  with it."* Once, until the user has opened the list or another app (`notifyErrorsWithoutDialog`).
+
+Both buttons use SAP's AI icon (`sap-icon://ai`). Ask AI only ever opens from a user's click: browsers block tabs
+opened any other way, so the plugin never opens one on its own.
+
+## What is sent to Ask AI
+
+Query parameters on `askAiUrl` (the same ones the Performance Assistant in `zmsghelp` uses):
+
+Parameter | Value
+---|---
+`message_id` | SAP message class, e.g. `M3` — from a message code of the form `<class>/<number>` (OData V2 Gateway and RAP error codes), empty otherwise
+`message_number` | SAP message number, e.g. `305`
+`transaction_code` | UI5 apps have no t-code: the app id (`sap.app/id`, or the semantic object-action if it can't be resolved)
+`message_text` | the message the user saw (cut to `askAiMaxMessageLength`)
+`user_name` / `user_full_name` | logged-in launchpad user (`UserInfo` service); empty when `askAiIncludeUser` is `false`
+
+One interaction often surfaces through several channels — a failed OData call carrying the SAP message code, and
+the dialog showing its text without the code. Captures with the same text within `duplicateWindowMs` are merged,
+so Ask AI from the dialog still gets `message_id`/`message_number`.
 
 ## Project layout
 
 File or Folder | Purpose
----------|----------
-`app/error.capture.plugin/` | the FLP plugin (UI5 component) and its message interceptor
-`app/error.capture.plugin/webapp/test/` | local FLP sandbox + a demo custom tile to exercise the plugin without a real system
-`app/error.capture.plugin/xs-app.json`, `ui5-deploy.yaml` | approuter routes (`/odata/*` → CAP service) and HTML5-repo build config for the plugin
-`db/schema.cds` | `ErrorLogs` entity that stores captured messages (HANA in production, SQLite for local dev)
-`srv/error-service.cds` / `srv/error-service.js` | `ErrorLogService`, the CAP service the plugin (and ABAP) report messages to
-`xs-security.json`, `mta.yaml` | XSUAA role (`ErrorLogAdmin`) and Cloud Foundry deployment descriptor (CAP srv + HDI/HANA container + HTML5 plugin + destinations)
-`abap/` | ABAP-side reporting for WebGUI/Web Dynpro transaction tiles the plugin can't reach — see [`abap/README.md`](abap/README.md)
+---|---
+`app/error.capture.plugin/webapp/util/MessageInterceptor.js` | captures messages (MessageBox, message model, JS errors, failed fetch/XHR calls incl. `$batch` operations, same-origin iframe apps) and adds the Ask AI button to MessageBox dialogs
+`app/error.capture.plugin/webapp/util/AskAI.js` | builds the Ask AI URL from a captured message and opens it
+`app/error.capture.plugin/webapp/util/AskAIHeaderItem.js` | the Ask AI button with the error badge in the launchpad header (`Extension` service)
+`app/error.capture.plugin/webapp/util/ErrorListDialog.js` | the "Errors in This App" list the header button opens
+`app/error.capture.plugin/webapp/manifest.json` | all configuration, under `sap.ui5/config/errorCapture`
+`app/error.capture.plugin/webapp/test/` | local FLP sandbox + a demo tile to try the plugin without a real system
+`mta.yaml`, `xs-security.json`, `app/error.capture.plugin/xs-app.json` | Cloud Foundry deployment: HTML5 repo + destination + XSUAA for Work Zone
 
-## How it works
+## Configuration (`sap.ui5/config/errorCapture`)
 
-1. **`app/error.capture.plugin/webapp/util/MessageInterceptor.js`** patches
-   `sap.m.MessageBox.*` and `sap.m.MessageToast.show`, and listens to the
-   shared UI5 message model (which backs the message popover / strip used by
-   Fiori Elements list reports & object pages). It also listens for
-   `window.onerror` / `unhandledrejection` for uncaught JS errors. This
-   covers messages from standard SAP apps and custom-built apps the same
-   way, since both use the same standard UI5 controls/APIs.
-   It also wraps `fetch` and `XMLHttpRequest` to record **failed service
-   calls** (`source: HttpError`): any 4xx/5xx response or network failure,
-   plus individual failed operations inside an OData `$batch` (which
-   itself returns 200). The OData error message/code is extracted from the
-   response body. Static resources are skipped via
-   `httpErrorIgnoreUrlPatterns`, and the plugin never reports its own calls.
-   Apps Work Zone loads into a **same-origin iframe** get the same
-   instrumentation (MessageBox, MessageToast, message model, JS errors,
-   service calls) as soon as their frame loads; cross-origin frames can't
-   be reached by design.
-2. Every captured message is enriched with the current app context
-   (semantic-object/action, app title, whether it looks like a standard SAP
-   app or a custom one, URL, user agent) resolved via
-   `sap.ushell.Container`'s `AppLifeCycle` service, then queued.
-3. The queue is flushed periodically (default every 5s), when it gets large,
-   and on page unload, via `POST` to the CAP service's `logErrors` batch
-   action. A copy of the queue is kept in `sessionStorage` so a message isn't
-   lost if the tab closes before the flush completes.
-4. **`srv/error-service.js`** stamps `timestamp`/`userId` server-side and
-   inserts into `ErrorLogs` (`db/schema.cds`), which CAP persists to HANA in
-   production (SQLite automatically for local `cds watch`).
-5. Captured messages can be browsed/purged through the `ErrorLogs` entity,
-   restricted to the `ErrorLogAdmin` role (see `xs-security.json`).
+Setting | Default | Meaning
+---|---|---
+`askAiUrl` | the Ask AI service | base URL the parameters above are appended to
+`askAiIncludeUser` | `true` | send `user_name` / `user_full_name`
+`askAiMaxMessageLength` | `1000` | longer message texts are cut (keeps the URL within browser limits)
+`askAiIcon` | `sap-icon://ai` | icon of all Ask AI buttons
+`addAskAiButtonToMessageBox` | `true` | Ask AI button in error/warning dialogs
+`showAskAiHeaderButton` | `true` | Ask AI button with error badge in the launchpad header, and the error list
+`notifyErrorsWithoutDialog` | `true` | toast pointing to the header button for errors not shown in a dialog
+`capturedSeverities` | `Error`, `Warning` | which messages count as errors
+`captureHttpErrors` / `httpErrorIgnoreUrlPatterns` | `true` / static resources, keep-alive, launchpad search (`/sap/es/ina/`, `/ESH_SEARCH_SRV/`), logout | failed service calls. Add any other launchpad-internal endpoints that fail in your landscape, or users get a badge for errors that aren't the app's
+`captureUnhandledJsErrors` / `ignoreMessagePatterns` | `true` / `Script error.`, `ResizeObserver loop` | uncaught script errors, and message texts never offered to AI
+`captureSameOriginIframes` | `true` | instrument apps Work Zone loads into a same-origin iframe
+`duplicateWindowMs` | `2000` | captures of the same text within this window are one interaction; later ones count as repeats
 
-All configuration (backend URL, which severities to capture, flush interval,
-etc.) lives in `app/error.capture.plugin/webapp/manifest.json` under
-`sap.ui5/config/errorCapture`, so it can be tuned per landscape without
-touching code.
-
-## Run the backend locally
-
-```sh
-npm install
-npm run watch        # cds watch - serves ErrorLogService on SQLite in-memory
-```
-
-Try it:
-
-```sh
-curl -u admin:admin -X POST http://localhost:4004/odata/v4/error-log/logError \
-  -H "Content-Type: application/json" \
-  -d '{"severity":"Error","message":"Test error","source":"MessageBox","appId":"demoapp-display"}'
-
-curl -u admin:admin http://localhost:4004/odata/v4/error-log/ErrorLogs
-```
-
-(The mocked local user `admin`/`admin` has the `ErrorLogAdmin` role, see
-`package.json` → `cds.requires.auth.users`.)
-
-## Try the plugin locally (no real FLP needed)
+## Try it locally (no real FLP needed)
 
 ```sh
 cd app/error.capture.plugin
@@ -88,106 +79,51 @@ npm install
 npm start             # opens webapp/test/flpSandbox.html
 ```
 
-This boots a minimal local Fiori Launchpad sandbox (via the public SAPUI5
-CDN) with the plugin registered as a `bootstrapPlugin` and one demo tile
-("Demo Custom Tile") that has buttons to trigger a `MessageBox.error`,
-`MessageBox.warning`, `MessageToast`, a message-model validation message,
-and an uncaught JS error. Open the browser console / Network tab to see each
-one captured and POSTed to `ErrorLogService`. Point `backendBaseUrl` in the
-plugin's `manifest.json` at your running `cds watch` instance using an
-**absolute** URL (e.g. `http://localhost:4004/odata/v4/error-log`; the
-default is relative and only makes sense behind an approuter) to see them land in `ErrorLogs`.
+This boots a local Fiori Launchpad sandbox (UI5 from the public CDN) with the plugin registered as a
+`bootstrapPlugin` and a "Demo Custom Tile" whose buttons raise a `MessageBox.error` (with message code
+`M3/305`), a warning, a confirmation (no Ask AI), a message-model error, a failed service call and an uncaught
+JS error.
 
 ## Deploying
 
-### SAP BTP Cloud Foundry + SAP Build Work Zone (wired up in `mta.yaml`)
+### SAP BTP Cloud Foundry + SAP Build Work Zone
 
 ```sh
 cf login -a <api-endpoint> --sso && cf target -o <org> -s <space>
-mbt build && cf deploy mta_archives/error-plugin_1.0.0.mtar
+mbt build && cf deploy mta_archives/error-plugin_2.1.0.mtar
 ```
 
-`mta.yaml` deploys, in one go:
+`mta.yaml` deploys the plugin as an **HTML5 app** to the HTML5 Application Repository (built by `npm run build`
+in `app/error.capture.plugin` from `ui5-deploy.yaml`; the UI5 runtime is *not* bundled), plus the destination and
+XSUAA instances Work Zone needs to serve it. Then:
 
-- the CAP service (`error-plugin-srv`) + an HDI deployer for the HANA schema
-  and an XSUAA instance with the `ErrorLogAdmin` role,
-- the plugin as an **HTML5 app** in the HTML5 Application Repository
-  (`error-plugin-ui`, built by `npm run build` in `app/error.capture.plugin`
-  from `ui5-deploy.yaml` - a plain zip, the UI5 runtime is *not* bundled),
-- the destination `srv-api` (with the user's token forwarded) that the
-  plugin's `xs-app.json` routes `/odata/*` to, i.e. to the CAP service.
+1. In Work Zone **Channel Manager**, refresh the HTML5 Apps content provider.
+2. In **Content Manager** add the plugin app (type *plugin*) to your content and assign it to the site / a role
+   of your users, then reload the site.
 
-The plugin's `backendBaseUrl` (`odata/v4/error-log` in `manifest.json`) is
-deliberately **relative**: `MessageInterceptor.js` resolves it against the
-plugin's own resource path, so requests hit the plugin's approuter routes
-rather than the launchpad's origin. Only use an absolute URL for local
-development (see above).
-
-After the deploy:
-
-1. Assign the `ErrorLogAdmin (error-plugin <org>-<space>)` role collection to
-   whoever should read `ErrorLogs` (not needed to *report* messages).
-2. In Work Zone **Channel Manager**, refresh the HTML5 Apps content provider.
-3. In **Content Manager** add the plugin app (type *plugin*) to your content
-   and assign it to the site / a role of your users, then reload the site.
+Upgrading from 1.x: the CAP service (`error-plugin-srv`), its HDI container (`error-plugin-db`) and the
+`ErrorLogAdmin` role collection are no longer part of the MTA. `cf deploy` does not delete them — remove them
+(and the HANA data in them) with `cf undeploy`/`cf delete` once you no longer need the stored logs.
 
 ### On-premise / ABAP Fiori Launchpad
 
-Upload the built app (`npm run build` in `app/error.capture.plugin`, unzip
-`dist/error.capture.plugin.zip`) to a BSP application (e.g. Fiori Tools
-"Deploy to ABAP"), create an `LPD_CUST` entry with plugin type `AL`
-(UI5 plugin), and assign it to the relevant Launchpad role(s). Set
-`backendBaseUrl` in the deployed `manifest.json` to a URL that reaches the CAP
-service same-origin (e.g. a reverse-proxy path/web dispatcher rule), because
-the browser cookie/CSRF flow in `MessageInterceptor.js` doesn't work
-cross-origin.
-
-## Transaction tiles (SAP GUI / Web Dynpro ABAP, launched by t-code)
-
-Tiles that launch a t-code run SAP GUI for HTML (WebGUI) or Web Dynpro ABAP
-in an iframe — server-rendered technology with no `sap.m.MessageBox`, no UI5
-message model, nothing the plugin's JS can hook into. Even genuine JS errors
-inside that iframe aren't reachable from the shell's `window.onerror` across
-the iframe boundary in general (browsers don't propagate iframe errors to
-the parent window).
-
-So this is handled the other way round: ABAP calls `ErrorLogService`
-directly, the same actions the plugin uses (`logError`/`logErrors`), via a
-reference class and setup guide in [`abap/README.md`](abap/README.md). Rows
-from this path use `source: ABAPMessage` / `WebDynproABAP`, and carry `tcode`
-and `program` instead of a UI5 `appId`. **It's opt-in per transaction** —
-your ABAP team wires the call into custom transactions directly, and into
-standard ones via whatever enhancement/BAdI your release provides (there
-isn't a single hook that's guaranteed to exist everywhere); see that guide
-for the trade-offs.
+Upload the built app (`npm run build` in `app/error.capture.plugin`, unzip `dist/error.capture.plugin.zip`) to a
+BSP application (e.g. Fiori Tools "Deploy to ABAP"), create an `LPD_CUST` entry with plugin type `AL`
+(UI5 plugin), and assign it to the relevant launchpad role(s).
 
 ## Notes / known limitations
 
-- **One row per interaction.** Every time a user runs into an error it's
-  stored as its own row, but one interaction is never stored twice: the same
-  error (same severity, message, message code, app and, for ABAP,
-  t-code/program — not source, user or URL) reported again within
-  `duplicateWindowMs` (default 2s) is the same trigger surfacing through
-  another channel (e.g. a failed call recorded as `HttpError` *and* the
-  `MessageBox` showing it) and is recorded once, under whichever channel saw
-  it first. Every occurrence of the same error carries the same
-  `fingerprint`, so group or count by it to see how often an error repeats.
-  Errors whose texts differ (e.g. an app shows its own wording for a failed
-  call) are separate rows.
-- `standardApp` is a heuristic based on the component id prefix
-  (`sap.ui5/config/errorCapture/standardAppNamespacePrefixes` in
-  `manifest.json`, default `sap.`/`com.sap.`) — adjust it to match your
-  landscape's naming conventions for custom apps.
-- Errors only written to the browser console (`console.error`, UI5
-  `Log.error`) aren't captured — they're not shown to the user and are
-  mostly framework noise.
-- `MessageToast` is only stored when `Information` is in
-  `capturedSeverities` (default: `Error`, `Warning` only).
-- CSRF token handling in `MessageInterceptor.js` is best-effort: it fetches
-  a token if the backend requires one (as most CAP-behind-approuter setups
-  do) and proceeds without one if the `GET` doesn't return a token (e.g.
-  plain local `cds watch`).
-
-## Learn More
-
-Learn more about CAP at <https://cap.cloud.sap>.
+- **Requires UI5 1.120 or later** on the launchpad (the header button uses the `Extension` service). Tested in
+  the local sandbox with UI5 1.120.30 and 1.153.0.
+- **SAP GUI for HTML / Web Dynpro ABAP transaction tiles aren't covered.** They aren't UI5 apps and normally run
+  in a cross-origin iframe, so there is nothing in the browser the plugin can hook into.
+- **Uncaught JS errors usually carry no detail.** When UI5 is loaded from a CDN (as in Work Zone), the browser
+  hands the page only `"Script error."` for errors raised through UI5 code; those are ignored rather than sent to
+  AI. Errors from same-origin scripts are captured with their text.
+- Errors raised before the shell has loaded the plugin (bootstrap plugins load asynchronously) aren't captured.
+- Dialogs/messages are merged with a failed call only when their texts match; an app showing its own wording for
+  a failed call yields two separate errors, and only the failed call's carries the message code.
+- `askAiUrl` defaults to the Ask AI service's **plain `http://`** endpoint. Message texts and user names travel in
+  the URL query string (visible in browser history and server logs) — switch to an `https://` endpoint before
+  productive use, or set `askAiIncludeUser` to `false`.
+- Errors only written to the browser console (`console.error`, UI5 `Log.error`) aren't captured.
